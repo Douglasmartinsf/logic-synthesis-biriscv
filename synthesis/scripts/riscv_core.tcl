@@ -16,7 +16,7 @@ set HDL_NAME $env(HDL_NAME)
 set INTERCONNECT_MODE ple
 set OP_CORNER $env(OP_CORNER)
 set HDL_LANG $env(HDL_LANG)
-set USE_VCD_POWER_ANALYSIS 0
+set USE_VCD_POWER_ANALYSIS 1
 
 set freq_mhz $env(FREQ_MHZ)
 
