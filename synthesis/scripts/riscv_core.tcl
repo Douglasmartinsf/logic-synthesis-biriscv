@@ -72,7 +72,6 @@ puts "Reading biRISC-V RTL files..."
 read_hdl -language ${HDL_LANG} \
     biriscv_defs.v \
     biriscv_alu.v \
-    biriscv_alu_pipelined.v \
     biriscv_csr_regfile.v \
     biriscv_csr.v \
     biriscv_decoder.v \

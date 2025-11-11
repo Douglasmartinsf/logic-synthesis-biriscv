@@ -70,9 +70,6 @@ module biriscv_lsu
     ,output [  5:0]  writeback_exception_o
     ,output          stall_o
 );
-
-
-
 //-----------------------------------------------------------------
 // Includes
 //-----------------------------------------------------------------
@@ -91,20 +88,36 @@ reg          mem_writeback_q;
 reg          mem_flush_q;
 reg          mem_unaligned_e1_q;
 reg          mem_unaligned_e2_q;
-
 reg          mem_load_q;
 reg          mem_xb_q;
 reg          mem_xh_q;
 reg          mem_ls_q;
 
+// --- MUDANÇA: Adicionar registradores para sinais de entrada da memória ---
+reg          mem_error_q;
+reg          mem_ack_q;
+
+always @ (posedge clk_i or posedge rst_i)
+if (rst_i) begin
+    mem_error_q <= 1'b0;
+    mem_ack_q   <= 1'b0;
+end
+else begin
+    mem_error_q <= mem_error_i;
+    mem_ack_q   <= mem_ack_i;
+end
+// --- FIM DA MUDANÇA ---
+
 //-----------------------------------------------------------------
 // Outstanding Access Tracking
 //-----------------------------------------------------------------
 reg pending_lsu_e2_q;
-
 wire issue_lsu_e1_w    = (mem_rd_o || (|mem_wr_o) || mem_writeback_o || mem_invalidate_o || mem_flush_o) && mem_accept_i;
-wire complete_ok_e2_w  = mem_ack_i & ~mem_error_i;
-wire complete_err_e2_w = mem_ack_i & mem_error_i;
+
+// --- MUDANÇA: Usar os sinais de entrada registrados ---
+wire complete_ok_e2_w  = mem_ack_q & ~mem_error_q;
+wire complete_err_e2_w = mem_ack_q & mem_error_q;
+// --- FIM DA MUDANÇA ---
 
 always @ (posedge clk_i or posedge rst_i)
 if (rst_i)
@@ -136,15 +149,12 @@ wire load_inst_w = (((opcode_opcode_i & `INST_LB_MASK) == `INST_LB)  ||
                     ((opcode_opcode_i & `INST_LBU_MASK) == `INST_LBU) || 
                     ((opcode_opcode_i & `INST_LHU_MASK) == `INST_LHU) || 
                     ((opcode_opcode_i & `INST_LWU_MASK) == `INST_LWU));
-
 wire load_signed_inst_w = (((opcode_opcode_i & `INST_LB_MASK) == `INST_LB)  || 
                            ((opcode_opcode_i & `INST_LH_MASK) == `INST_LH)  || 
                            ((opcode_opcode_i & `INST_LW_MASK) == `INST_LW));
-
 wire store_inst_w = (((opcode_opcode_i & `INST_SB_MASK) == `INST_SB)  || 
                      ((opcode_opcode_i & `INST_SH_MASK) == `INST_SH)  || 
                      ((opcode_opcode_i & `INST_SW_MASK) == `INST_SW));
-
 wire req_lb_w = ((opcode_opcode_i & `INST_LB_MASK) == `INST_LB) || ((opcode_opcode_i & `INST_LBU_MASK) == `INST_LBU);
 wire req_lh_w = ((opcode_opcode_i & `INST_LH_MASK) == `INST_LH) || ((opcode_opcode_i & `INST_LHU_MASK) == `INST_LHU);
 wire req_lw_w = ((opcode_opcode_i & `INST_LW_MASK) == `INST_LW) || ((opcode_opcode_i & `INST_LWU_MASK) == `INST_LWU);
@@ -152,8 +162,10 @@ wire req_sb_w = ((opcode_opcode_i & `INST_LB_MASK) == `INST_SB);
 wire req_sh_w = ((opcode_opcode_i & `INST_LH_MASK) == `INST_SH);
 wire req_sw_w = ((opcode_opcode_i & `INST_LW_MASK) == `INST_SW);
 
-wire req_sw_lw_w = ((opcode_opcode_i & `INST_SW_MASK) == `INST_SW) || ((opcode_opcode_i & `INST_LW_MASK) == `INST_LW) || ((opcode_opcode_i & `INST_LWU_MASK) == `INST_LWU);
-wire req_sh_lh_w = ((opcode_opcode_i & `INST_SH_MASK) == `INST_SH) || ((opcode_opcode_i & `INST_LH_MASK) == `INST_LH) || ((opcode_opcode_i & `INST_LHU_MASK) == `INST_LHU);
+wire req_sw_lw_w = ((opcode_opcode_i & `INST_SW_MASK) == `INST_SW) ||
+                   ((opcode_opcode_i & `INST_LW_MASK) == `INST_LW) || ((opcode_opcode_i & `INST_LWU_MASK) == `INST_LWU);
+wire req_sh_lh_w = ((opcode_opcode_i & `INST_SH_MASK) == `INST_SH) ||
+                   ((opcode_opcode_i & `INST_LH_MASK) == `INST_LH) || ((opcode_opcode_i & `INST_LHU_MASK) == `INST_LHU);
 
 reg [31:0]  mem_addr_r;
 reg         mem_unaligned_r;
@@ -241,7 +253,6 @@ wire dcache_invalidate_w = ((opcode_opcode_i & `INST_CSRRW_MASK) == `INST_CSRRW)
 //-----------------------------------------------------------------
 // Sequential
 //-----------------------------------------------------------------
-
 always @ (posedge clk_i or posedge rst_i)
 if (rst_i)
 begin
@@ -260,13 +271,13 @@ begin
     mem_ls_q           <= 1'b0;
 end
 // Memory access fault - squash next operation (exception coming...)
-else if (complete_err_e2_w || mem_unaligned_e2_q)
+else if (complete_err_e2_w || mem_unaligned_e2_q) 
 begin
     mem_addr_q         <= 32'b0;
     mem_data_wr_q      <= 32'b0;
     mem_rd_q           <= 1'b0;
     mem_wr_q           <= 4'b0;
-    mem_cacheable_q    <= 1'b0;
+    mem_cacheable_q    <= 1'b0; // <-- O registrador de destino do caminho crítico
     mem_invalidate_q   <= 1'b0;
     mem_writeback_q    <= 1'b0;
     mem_flush_q        <= 1'b0;
@@ -294,12 +305,12 @@ begin
     mem_xh_q           <= req_lh_w | req_sh_w;
     mem_ls_q           <= load_signed_inst_w;
 
-/* verilator lint_off UNSIGNED */
-/* verilator lint_off CMPCONST */
+    /* verilator lint_off UNSIGNED */
+    /* verilator lint_off CMPCONST */
     mem_cacheable_q  <= (mem_addr_r >= MEM_CACHE_ADDR_MIN && mem_addr_r <= MEM_CACHE_ADDR_MAX) ||
                         (opcode_valid_i && (dcache_invalidate_w || dcache_writeback_w || dcache_flush_w));
-/* verilator lint_on CMPCONST */
-/* verilator lint_on UNSIGNED */
+    /* verilator lint_on CMPCONST */
+    /* verilator lint_on UNSIGNED */
 
     mem_invalidate_q <= opcode_valid_i & dcache_invalidate_w;
     mem_writeback_q  <= opcode_valid_i & dcache_writeback_w;
@@ -318,7 +329,8 @@ assign mem_writeback_o  = mem_writeback_q;
 assign mem_flush_o      = mem_flush_q;
 
 // Stall upstream if cache is busy
-assign stall_o          = ((mem_writeback_o || mem_invalidate_o || mem_flush_o || mem_rd_o || mem_wr_o != 4'b0) && !mem_accept_i) || delay_lsu_e2_w || mem_unaligned_e1_q;
+assign stall_o          = ((mem_writeback_o || mem_invalidate_o || mem_flush_o || mem_rd_o || mem_wr_o != 4'b0) && !mem_accept_i) ||
+                          delay_lsu_e2_w || mem_unaligned_e1_q;
 
 wire        resp_load_w;
 wire [31:0] resp_addr_w;
@@ -343,7 +355,9 @@ u_lsu_request
 
     ,.valid_o()
     ,.data_out_o({resp_addr_w, resp_signed_w, resp_half_w, resp_byte_w, resp_load_w})
-    ,.pop_i(mem_ack_i || mem_unaligned_e2_q)
+    // --- MUDANÇA: Usar o sinal de ack registrado ---
+    ,.pop_i(mem_ack_q || mem_unaligned_e2_q) // <-- MUDANÇA AQUI
+    // --- FIM DA MUDANÇA ---
 );
 
 //-----------------------------------------------------------------
@@ -358,18 +372,19 @@ reg [31:0] wb_result_r;
 always @ *
 begin
     wb_result_r   = 32'b0;
-
     // Tag associated with load
     addr_lsb_r    = resp_addr_w[1:0];
     load_byte_r   = resp_byte_w;
     load_half_r   = resp_half_w;
     load_signed_r = resp_signed_w;
 
+    // --- MUDANÇA: Usar os sinais de entrada registrados ---
     // Access fault - pass badaddr on writeback result bus
-    if ((mem_ack_i && mem_error_i) || mem_unaligned_e2_q)
+    if ((mem_ack_q && mem_error_q) || mem_unaligned_e2_q) // <-- MUDANÇA AQUI
         wb_result_r = resp_addr_w;
     // Handle responses
-    else if (mem_ack_i && resp_load_w)
+    else if (mem_ack_q && resp_load_w) // <-- MUDANÇA AQUI
+    // --- FIM DA MUDANÇA ---
     begin
         if (load_byte_r)
         begin
@@ -398,16 +413,19 @@ begin
     end
 end
 
-assign writeback_valid_o    = mem_ack_i | mem_unaligned_e2_q;
+// --- MUDANÇA: Usar o sinal de ack registrado ---
+assign writeback_valid_o    = mem_ack_q | mem_unaligned_e2_q; // <-- MUDANÇA AQUI
+// --- FIM DA MUDANÇA ---
 assign writeback_value_o    = wb_result_r;
 
 wire fault_load_align_w     = mem_unaligned_e2_q & resp_load_w;
 wire fault_store_align_w    = mem_unaligned_e2_q & ~resp_load_w;
-wire fault_load_bus_w       = mem_error_i &&  resp_load_w;
-wire fault_store_bus_w      = mem_error_i && ~resp_load_w;
-wire fault_load_page_w      = mem_error_i && mem_load_fault_i;
-wire fault_store_page_w     = mem_error_i && mem_store_fault_i;
-
+// --- MUDANÇA: Usar o sinal de erro registrado ---
+wire fault_load_bus_w       = mem_error_q &&  resp_load_w;
+wire fault_store_bus_w      = mem_error_q && ~resp_load_w;
+wire fault_load_page_w      = mem_error_q && mem_load_fault_i;
+wire fault_store_page_w     = mem_error_q && mem_store_fault_i;
+// --- FIM DA MUDANÇA ---
 
 assign writeback_exception_o         = fault_load_align_w  ? `EXCEPTION_MISALIGNED_LOAD:
                                        fault_store_align_w ? `EXCEPTION_MISALIGNED_STORE:
@@ -444,7 +462,6 @@ module biriscv_lsu_fifo
     ,output              accept_o
     ,output              valid_o
 );
-
 //-----------------------------------------------------------------
 // Local Params
 //-----------------------------------------------------------------
@@ -469,7 +486,6 @@ begin
     count_q   <= {(COUNT_W) {1'b0}};
     rd_ptr_q  <= {(ADDR_W) {1'b0}};
     wr_ptr_q  <= {(ADDR_W) {1'b0}};
-
     for (i=0;i<DEPTH;i=i+1)
     begin
         ram_q[i] <= {(WIDTH) {1'b0}};

@@ -178,17 +178,22 @@ module biriscv_issue
     ,output          mul_hold_o
     ,output          interrupt_inhibit_o
 );
-
-
-
 `include "biriscv_defs.v"
 
 wire enable_dual_issue_w = SUPPORT_DUAL_ISSUE;
 wire enable_muldiv_w     = SUPPORT_MULDIV;
 wire enable_mul_bypass_w = SUPPORT_MUL_BYPASS;
 
-wire stall_w;
+// --- MUDANÇA: Renomeado 'stall_w' para 'e1_stall_w' para clareza ---
+wire e1_stall_w; // Era 'stall_w'
 wire squash_w;
+
+// --- MUDANÇA: Declaração dos wires do RegFile movida para o topo ---
+wire [31:0] issue_a_ra_value_w;
+wire [31:0] issue_a_rb_value_w;
+wire [31:0] issue_b_ra_value_w;
+wire [31:0] issue_b_rb_value_w;
+// --- FIM DA MUDANÇA ---
 
 //-------------------------------------------------------------
 // PC
@@ -255,7 +260,7 @@ assign branch_pc_o               = branch_csr_request_i ? branch_csr_pc_i : pc_x
 assign branch_priv_o             = branch_csr_request_i ? branch_csr_priv_i : priv_x_q;
 
 //-------------------------------------------------------------
-// Instruction Decoder
+// Instruction Decoder (Estágio X1)
 //-------------------------------------------------------------
 reg        opcode_a_valid_r;
 reg        opcode_b_valid_r;
@@ -316,7 +321,6 @@ wire       issue_a_div_w      = (slot0_valid_r ? fetch0_instr_div_i      : fetch
 wire       issue_a_csr_w      = (slot0_valid_r ? fetch0_instr_csr_i      : fetch1_instr_csr_i);
 wire       issue_a_invalid_w  = (slot0_valid_r ? fetch0_instr_invalid_i  : fetch1_instr_invalid_i);
 
-
 wire [4:0] issue_b_ra_idx_w   = opcode_b_r[19:15];
 wire [4:0] issue_b_rb_idx_w   = opcode_b_r[24:20];
 wire [4:0] issue_b_rd_idx_w   = opcode_b_r[11:7];
@@ -338,7 +342,6 @@ wire        pipe1_squash_e1_e2_w;
 reg         opcode_a_issue_r;
 reg         opcode_a_accept_r;
 wire        pipe0_stall_raw_w;
-
 wire        pipe0_load_e1_w;
 wire        pipe0_store_e1_w;
 wire        pipe0_mul_e1_w;
@@ -368,6 +371,91 @@ wire [`EXCEPTION_W-1:0] pipe0_exception_wb_w;
 wire [`EXCEPTION_W-1:0] issue_a_fault_w = opcode_a_fault_r[0] ? `EXCEPTION_FAULT_FETCH:
                                           opcode_a_fault_r[1] ? `EXCEPTION_PAGE_FAULT_INST: `EXCEPTION_W'b0;
 
+// --- MUDANÇA: Definição dos registradores do pipeline X1 -> X2 (Pipe 0) ---
+`define PCINFO_W     10
+`define PCINFO_ALU       0
+`define PCINFO_LOAD      1
+`define PCINFO_STORE     2
+`define PCINFO_CSR       3
+`define PCINFO_DIV       4
+`define PCINFO_MUL       5
+`define PCINFO_BRANCH    6
+`define PCINFO_RD_VALID  7
+`define PCINFO_INTR      8
+`define PCINFO_COMPLETE  9
+`define RD_IDX_R    11:7
+
+reg                     x2_pipe0_valid_q;
+reg [`PCINFO_W-1:0]     x2_pipe0_ctrl_q;
+reg [31:0]              x2_pipe0_pc_q;
+reg [31:0]              x2_pipe0_opcode_q;
+reg [4:0]               x2_pipe0_rd_idx_q;
+reg [4:0]               x2_pipe0_ra_idx_q;
+reg [4:0]               x2_pipe0_rb_idx_q;
+reg [31:0]              x2_pipe0_ra_val_q; // Valor bruto do RegFile
+reg [31:0]              x2_pipe0_rb_val_q; // Valor bruto do RegFile
+reg [31:0]              x2_pipe0_branch_target_q;
+reg                     x2_pipe0_branch_taken_q;
+reg [`EXCEPTION_W-1:0]  x2_pipe0_exception_q;
+
+// --- MUDANÇA: Lógica de clock para os registradores X1 -> X2 (Pipe 0) ---
+always @ (posedge clk_i or posedge rst_i)
+if (rst_i)
+begin
+    x2_pipe0_valid_q         <= 1'b0;
+    x2_pipe0_ctrl_q          <= `PCINFO_W'b0;
+    x2_pipe0_pc_q            <= 32'b0;
+    x2_pipe0_opcode_q        <= 32'b0;
+    x2_pipe0_rd_idx_q        <= 5'b0;
+    x2_pipe0_ra_idx_q        <= 5'b0;
+    x2_pipe0_rb_idx_q        <= 5'b0;
+    x2_pipe0_ra_val_q        <= 32'b0;
+    x2_pipe0_rb_val_q        <= 32'b0;
+    x2_pipe0_branch_target_q <= 32'b0;
+    x2_pipe0_branch_taken_q  <= 1'b0;
+    x2_pipe0_exception_q     <= `EXCEPTION_W'b0;
+end
+// Stall - mantém o estado X2
+else if (e1_stall_w)
+    ;
+// Dispara instrução do X1 para o X2
+else if (opcode_a_issue_r && opcode_a_accept_r)
+begin
+    x2_pipe0_valid_q                  <= 1'b1;
+    x2_pipe0_ctrl_q[`PCINFO_ALU]      <= ~(issue_a_lsu_w | issue_a_csr_w | issue_a_div_w | issue_a_mul_w);
+    x2_pipe0_ctrl_q[`PCINFO_LOAD]     <= issue_a_lsu_w &  issue_a_sb_alloc_w & ~take_interrupt_i;
+    x2_pipe0_ctrl_q[`PCINFO_STORE]    <= issue_a_lsu_w & ~issue_a_sb_alloc_w & ~take_interrupt_i;
+    x2_pipe0_ctrl_q[`PCINFO_CSR]      <= issue_a_csr_w & ~take_interrupt_i;
+    x2_pipe0_ctrl_q[`PCINFO_DIV]      <= issue_a_div_w & ~take_interrupt_i;
+    x2_pipe0_ctrl_q[`PCINFO_MUL]      <= issue_a_mul_w & ~take_interrupt_i;
+    x2_pipe0_ctrl_q[`PCINFO_BRANCH]   <= issue_a_branch_w & ~take_interrupt_i;
+    x2_pipe0_ctrl_q[`PCINFO_RD_VALID] <= issue_a_sb_alloc_w & ~take_interrupt_i;
+    x2_pipe0_ctrl_q[`PCINFO_INTR]     <= take_interrupt_i;
+    x2_pipe0_ctrl_q[`PCINFO_COMPLETE] <= 1'b1;
+    
+    x2_pipe0_pc_q            <= opcode_a_pc_r;
+    x2_pipe0_opcode_q        <= opcode_a_r;
+    x2_pipe0_rd_idx_q        <= issue_a_rd_idx_w;
+    x2_pipe0_ra_idx_q        <= issue_a_ra_idx_w;
+    x2_pipe0_rb_idx_q        <= issue_a_rb_idx_w;
+    x2_pipe0_ra_val_q        <= issue_a_ra_value_w; // Valor bruto do RegFile
+    x2_pipe0_rb_val_q        <= issue_a_rb_value_w; // Valor bruto do RegFile
+    x2_pipe0_branch_taken_q  <= branch_d_exec0_request_i;
+    x2_pipe0_branch_target_q <= branch_d_exec0_pc_i;
+    
+    x2_pipe0_exception_q     <= (|issue_a_fault_w) ? issue_a_fault_w : 
+                               (branch_d_exec0_request_i && branch_d_exec0_pc_i[1:0] != 2'b0) ? `EXCEPTION_MISALIGNED_FETCH : `EXCEPTION_W'b0;
+end
+// Sem disparo (bolha)
+else
+begin
+    x2_pipe0_valid_q         <= 1'b0;
+    x2_pipe0_ctrl_q          <= `PCINFO_W'b0;
+    x2_pipe0_exception_q     <= `EXCEPTION_W'b0;
+    // (outros regs não importam)
+end
+
+
 biriscv_pipe_ctrl
 #( 
      .SUPPORT_LOAD_BYPASS(SUPPORT_LOAD_BYPASS)
@@ -378,25 +466,26 @@ u_pipe0_ctrl
      .clk_i(clk_i)
     ,.rst_i(rst_i)    
 
+    // --- MUDANÇA: Entradas do 'issue' agora vêm dos registradores X2 ---
     // Issue
-    ,.issue_valid_i(opcode_a_issue_r)
-    ,.issue_accept_i(opcode_a_accept_r)
-    ,.issue_stall_i(stall_w)
-    ,.issue_lsu_i(issue_a_lsu_w)
-    ,.issue_csr_i(issue_a_csr_w)
-    ,.issue_div_i(issue_a_div_w)
-    ,.issue_mul_i(issue_a_mul_w)
-    ,.issue_branch_i(issue_a_branch_w)
-    ,.issue_rd_valid_i(issue_a_sb_alloc_w)
-    ,.issue_rd_i(issue_a_rd_idx_w)
-    ,.issue_exception_i(issue_a_fault_w)
-    ,.issue_pc_i(opcode0_pc_o)
-    ,.issue_opcode_i(opcode0_opcode_o)
-    ,.issue_operand_ra_i(opcode0_ra_operand_o)
-    ,.issue_operand_rb_i(opcode0_rb_operand_o)
-    ,.issue_branch_taken_i(branch_d_exec0_request_i)
-    ,.issue_branch_target_i(branch_d_exec0_pc_i)
-    ,.take_interrupt_i(take_interrupt_i)
+    ,.issue_valid_i(x2_pipe0_valid_q) // Era opcode_a_issue_r
+    ,.issue_accept_i(1'b1)            // X2 sempre aceita (controlado pelo stall)
+    ,.issue_stall_i(e1_stall_w)       // Era stall_w
+    ,.issue_lsu_i(x2_pipe0_ctrl_q[`PCINFO_LOAD] | x2_pipe0_ctrl_q[`PCINFO_STORE])
+    ,.issue_csr_i(x2_pipe0_ctrl_q[`PCINFO_CSR])
+    ,.issue_div_i(x2_pipe0_ctrl_q[`PCINFO_DIV])
+    ,.issue_mul_i(x2_pipe0_ctrl_q[`PCINFO_MUL])
+    ,.issue_branch_i(x2_pipe0_ctrl_q[`PCINFO_BRANCH])
+    ,.issue_rd_valid_i(x2_pipe0_ctrl_q[`PCINFO_RD_VALID])
+    ,.issue_rd_i(x2_pipe0_rd_idx_q)
+    ,.issue_exception_i(x2_pipe0_exception_q)
+    ,.issue_pc_i(x2_pipe0_pc_q)
+    ,.issue_opcode_i(x2_pipe0_opcode_q)
+    ,.issue_operand_ra_i(opcode0_ra_operand_o) // Vindo da lógica de Bypass (X2)
+    ,.issue_operand_rb_i(opcode0_rb_operand_o) // Vindo da lógica de Bypass (X2)
+    ,.issue_branch_taken_i(x2_pipe0_branch_taken_q)
+    ,.issue_branch_target_i(x2_pipe0_branch_target_q)
+    ,.take_interrupt_i(x2_pipe0_ctrl_q[`PCINFO_INTR]) // Era take_interrupt_i
 
     // Execution stage 1: ALU result
     ,.alu_result_e1_i(writeback_exec0_value_i)
@@ -422,6 +511,7 @@ u_pipe0_ctrl
     ,.mem_exception_e2_i(writeback_mem_exception_i)
     ,.mul_result_e2_i(writeback_mul_value_i)
 
+ 
     // Execution stage 2
     ,.load_e2_o(pipe0_load_e2_w)
     ,.mul_e2_o(pipe0_mul_e2_w)
@@ -447,13 +537,14 @@ u_pipe0_ctrl
     ,.operand_ra_wb_o(pipe0_ra_val_wb_w)
     ,.operand_rb_wb_o(pipe0_rb_val_wb_w)
     ,.exception_wb_o(pipe0_exception_wb_w)
+    
     ,.csr_write_wb_o(csr_writeback_write_o)
     ,.csr_waddr_wb_o(csr_writeback_waddr_o)
     ,.csr_wdata_wb_o(csr_writeback_wdata_o)   
 );
 
-assign exec0_hold_o = stall_w;
-assign mul_hold_o   = stall_w;
+assign exec0_hold_o = e1_stall_w; // Era stall_w
+assign mul_hold_o   = e1_stall_w; // Era stall_w
 
 //-------------------------------------------------------------
 // Pipe1 - Status tracking
@@ -461,7 +552,6 @@ assign mul_hold_o   = stall_w;
 reg         opcode_b_issue_r;
 reg         opcode_b_accept_r;
 wire        pipe1_stall_raw_w;
-
 wire        pipe1_load_e1_w;
 wire        pipe1_store_e1_w;
 wire        pipe1_mul_e1_w;
@@ -490,6 +580,77 @@ wire [`EXCEPTION_W-1:0] pipe1_exception_wb_w;
 wire [`EXCEPTION_W-1:0] issue_b_fault_w = opcode_b_fault_r[0] ? `EXCEPTION_FAULT_FETCH:
                                           opcode_b_fault_r[1] ? `EXCEPTION_PAGE_FAULT_INST: `EXCEPTION_W'b0;
 
+// --- MUDANÇA: Definição dos registradores do pipeline X1 -> X2 (Pipe 1) ---
+reg                     x2_pipe1_valid_q;
+reg [`PCINFO_W-1:0]     x2_pipe1_ctrl_q; // Apenas bits de controle, sem CSR/DIV
+reg [31:0]              x2_pipe1_pc_q;
+reg [31:0]              x2_pipe1_opcode_q;
+reg [4:0]               x2_pipe1_rd_idx_q;
+reg [4:0]               x2_pipe1_ra_idx_q;
+reg [4:0]               x2_pipe1_rb_idx_q;
+reg [31:0]              x2_pipe1_ra_val_q; // Valor bruto do RegFile
+reg [31:0]              x2_pipe1_rb_val_q; // Valor bruto do RegFile
+reg [31:0]              x2_pipe1_branch_target_q;
+reg                     x2_pipe1_branch_taken_q;
+reg [`EXCEPTION_W-1:0]  x2_pipe1_exception_q;
+
+// --- MUDANÇA: Lógica de clock para os registradores X1 -> X2 (Pipe 1) ---
+always @ (posedge clk_i or posedge rst_i)
+if (rst_i)
+begin
+    x2_pipe1_valid_q         <= 1'b0;
+    x2_pipe1_ctrl_q          <= `PCINFO_W'b0;
+    x2_pipe1_pc_q            <= 32'b0;
+    x2_pipe1_opcode_q        <= 32'b0;
+    x2_pipe1_rd_idx_q        <= 5'b0;
+    x2_pipe1_ra_idx_q        <= 5'b0;
+    x2_pipe1_rb_idx_q        <= 5'b0;
+    x2_pipe1_ra_val_q        <= 32'b0;
+    x2_pipe1_rb_val_q        <= 32'b0;
+    x2_pipe1_branch_target_q <= 32'b0;
+    x2_pipe1_branch_taken_q  <= 1'b0;
+    x2_pipe1_exception_q     <= `EXCEPTION_W'b0;
+end
+// Stall - mantém o estado X2
+else if (e1_stall_w)
+    ;
+// Dispara instrução do X1 para o X2
+else if (opcode_b_issue_r && opcode_b_accept_r)
+begin
+    x2_pipe1_valid_q                  <= 1'b1;
+    x2_pipe1_ctrl_q[`PCINFO_ALU]      <= ~(issue_b_lsu_w | issue_b_mul_w); // Pipe 1 não tem CSR/DIV
+    x2_pipe1_ctrl_q[`PCINFO_LOAD]     <= issue_b_lsu_w &  issue_b_sb_alloc_w & ~take_interrupt_i;
+    x2_pipe1_ctrl_q[`PCINFO_STORE]    <= issue_b_lsu_w & ~issue_b_sb_alloc_w & ~take_interrupt_i;
+    x2_pipe1_ctrl_q[`PCINFO_CSR]      <= 1'b0; // Pipe 1 não tem CSR
+    x2_pipe1_ctrl_q[`PCINFO_DIV]      <= 1'b0; // Pipe 1 não tem DIV
+    x2_pipe1_ctrl_q[`PCINFO_MUL]      <= issue_b_mul_w & ~take_interrupt_i;
+    x2_pipe1_ctrl_q[`PCINFO_BRANCH]   <= issue_b_branch_w & ~take_interrupt_i;
+    x2_pipe1_ctrl_q[`PCINFO_RD_VALID] <= issue_b_sb_alloc_w & ~take_interrupt_i;
+    x2_pipe1_ctrl_q[`PCINFO_INTR]     <= take_interrupt_i;
+    x2_pipe1_ctrl_q[`PCINFO_COMPLETE] <= 1'b1;
+    
+    x2_pipe1_pc_q            <= opcode_b_pc_r;
+    x2_pipe1_opcode_q        <= opcode_b_r;
+    x2_pipe1_rd_idx_q        <= issue_b_rd_idx_w;
+    x2_pipe1_ra_idx_q        <= issue_b_ra_idx_w;
+    x2_pipe1_rb_idx_q        <= issue_b_rb_idx_w;
+    x2_pipe1_ra_val_q        <= issue_b_ra_value_w; // Valor bruto do RegFile
+    x2_pipe1_rb_val_q        <= issue_b_rb_value_w; // Valor bruto do RegFile
+    x2_pipe1_branch_taken_q  <= branch_d_exec1_request_i;
+    x2_pipe1_branch_target_q <= branch_d_exec1_pc_i;
+    
+    x2_pipe1_exception_q     <= (|issue_b_fault_w) ? issue_b_fault_w : 
+                               (branch_d_exec1_request_i && branch_d_exec1_pc_i[1:0] != 2'b0) ? `EXCEPTION_MISALIGNED_FETCH : `EXCEPTION_W'b0;
+end
+// Sem disparo (bolha)
+else
+begin
+    x2_pipe1_valid_q         <= 1'b0;
+    x2_pipe1_ctrl_q          <= `PCINFO_W'b0;
+    x2_pipe1_exception_q     <= `EXCEPTION_W'b0;
+end
+
+
 biriscv_pipe_ctrl
 #( 
      .SUPPORT_LOAD_BYPASS(SUPPORT_LOAD_BYPASS)
@@ -500,25 +661,26 @@ u_pipe1_ctrl
      .clk_i(clk_i)
     ,.rst_i(rst_i)
 
+    // --- MUDANÇA: Entradas do 'issue' agora vêm dos registradores X2 ---
     // Issue
-    ,.issue_valid_i(opcode_b_issue_r)
-    ,.issue_accept_i(opcode_b_accept_r)
-    ,.issue_stall_i(stall_w)
-    ,.issue_lsu_i(issue_b_lsu_w)
-    ,.issue_csr_i(1'b0)
-    ,.issue_div_i(1'b0)
-    ,.issue_mul_i(issue_b_mul_w)
-    ,.issue_branch_i(issue_b_branch_w)
-    ,.issue_rd_valid_i(issue_b_sb_alloc_w)
-    ,.issue_rd_i(issue_b_rd_idx_w)
-    ,.issue_exception_i(issue_b_fault_w)
-    ,.issue_pc_i(opcode1_pc_o)
-    ,.issue_opcode_i(opcode1_opcode_o)
-    ,.issue_operand_ra_i(opcode1_ra_operand_o)
-    ,.issue_operand_rb_i(opcode1_rb_operand_o)
-    ,.issue_branch_taken_i(branch_d_exec1_request_i)
-    ,.issue_branch_target_i(branch_d_exec1_pc_i)
-    ,.take_interrupt_i(take_interrupt_i)
+    ,.issue_valid_i(x2_pipe1_valid_q)
+    ,.issue_accept_i(1'b1)
+    ,.issue_stall_i(e1_stall_w) // Era stall_w
+    ,.issue_lsu_i(x2_pipe1_ctrl_q[`PCINFO_LOAD] | x2_pipe1_ctrl_q[`PCINFO_STORE])
+    ,.issue_csr_i(1'b0) // Pipe 1 não tem CSR
+    ,.issue_div_i(1'b0) // Pipe 1 não tem DIV
+    ,.issue_mul_i(x2_pipe1_ctrl_q[`PCINFO_MUL])
+    ,.issue_branch_i(x2_pipe1_ctrl_q[`PCINFO_BRANCH])
+    ,.issue_rd_valid_i(x2_pipe1_ctrl_q[`PCINFO_RD_VALID])
+    ,.issue_rd_i(x2_pipe1_rd_idx_q)
+    ,.issue_exception_i(x2_pipe1_exception_q)
+    ,.issue_pc_i(x2_pipe1_pc_q)
+    ,.issue_opcode_i(x2_pipe1_opcode_q)
+    ,.issue_operand_ra_i(opcode1_ra_operand_o) // Vindo da lógica de Bypass (X2)
+    ,.issue_operand_rb_i(opcode1_rb_operand_o) // Vindo da lógica de Bypass (X2)
+    ,.issue_branch_taken_i(x2_pipe1_branch_taken_q)
+    ,.issue_branch_target_i(x2_pipe1_branch_target_q)
+    ,.take_interrupt_i(x2_pipe1_ctrl_q[`PCINFO_INTR])
 
     // Execution stage 1: ALU, CSR result
     ,.alu_result_e1_i(writeback_exec1_value_i)
@@ -544,6 +706,7 @@ u_pipe1_ctrl
     ,.mem_exception_e2_i(writeback_mem_exception_i)
     ,.mul_result_e2_i(writeback_mul_value_i)
 
+    
     // Execution stage 2
     ,.load_e2_o(pipe1_load_e2_w)
     ,.mul_e2_o(pipe1_mul_e2_w)
@@ -574,7 +737,7 @@ u_pipe1_ctrl
     ,.csr_wdata_wb_o()
 );
 
-assign exec1_hold_o = stall_w;
+assign exec1_hold_o = e1_stall_w; // Era stall_w
 
 assign csr_writeback_exception_o      = pipe0_exception_wb_w | pipe1_exception_wb_w;
 assign csr_writeback_exception_pc_o   = (|pipe0_exception_wb_w) ? pipe0_pc_wb_w     : pipe1_pc_wb_w;
@@ -627,7 +790,7 @@ else if (pipe0_csr_wb_w)
 assign squash_w = pipe0_squash_e1_e2_w || pipe1_squash_e1_e2_w;
 
 //-------------------------------------------------------------
-// Issue / scheduling logic
+// Issue / scheduling logic (Estágio X1)
 //-------------------------------------------------------------
 reg [31:0] scoreboard_r;
 reg        pipe1_mux_lsu_r;
@@ -683,7 +846,7 @@ begin
         scoreboard_r = 32'hFFFFFFFF;
 
     // Stall - no issues...
-    if (lsu_stall_i || stall_w || div_pending_q || csr_pending_q)
+    if (lsu_stall_i || e1_stall_w || div_pending_q || csr_pending_q) // --- MUDANÇA: Era 'stall_w'
         ;
     // Primary slot (lsu, branch, alu, mul, div, csr)
     else if (opcode_a_valid_r &&
@@ -699,7 +862,7 @@ begin
     end
 
     // Stall - no issues...
-    if (lsu_stall_i || stall_w || div_pending_q || csr_pending_q)
+    if (lsu_stall_i || e1_stall_w || div_pending_q || csr_pending_q) // --- MUDANÇA: Era 'stall_w'
         ;
     // Secondary Slot (lsu, branch, alu, mul)
     else if (dual_issue_ok_w && opcode_b_valid_r && opcode_a_accept_r &&
@@ -717,29 +880,24 @@ begin
     end    
 end
 
-assign lsu_opcode_valid_o   = (pipe1_mux_lsu_r ? opcode_b_issue_r : opcode_a_issue_r) & ~take_interrupt_i;
-assign exec0_opcode_valid_o = opcode_a_issue_r;
-assign mul_opcode_valid_o   = enable_muldiv_w & (pipe1_mux_mul_r ? opcode_b_issue_r : opcode_a_issue_r);
-assign div_opcode_valid_o   = enable_muldiv_w & (opcode_a_issue_r);
+assign lsu_opcode_valid_o   = (pipe1_mux_lsu_r ? x2_pipe1_valid_q : x2_pipe0_valid_q) & ~x2_pipe0_ctrl_q[`PCINFO_INTR]; // --- MUDANÇA: usa regs X2
+assign exec0_opcode_valid_o = x2_pipe0_valid_q; // --- MUDANÇA: usa regs X2
+assign mul_opcode_valid_o   = enable_muldiv_w & (pipe1_mux_mul_r ? x2_pipe1_valid_q : x2_pipe0_valid_q); // --- MUDANÇA: usa regs X2
+assign div_opcode_valid_o   = enable_muldiv_w & x2_pipe0_valid_q; // --- MUDANÇA: usa regs X2
 assign interrupt_inhibit_o  = csr_pending_q || issue_a_csr_w;
 
-assign exec1_opcode_valid_o = opcode_b_issue_r;
-
+assign exec1_opcode_valid_o = x2_pipe1_valid_q; // --- MUDANÇA: usa regs X2
 assign dual_issue_w         = opcode_b_issue_r & opcode_b_accept_r & ~take_interrupt_i;
 assign single_issue_w       = (opcode_a_issue_r & opcode_a_accept_r) & ~dual_issue_w & ~take_interrupt_i;
 
 assign fetch0_accept_o      = ((slot0_valid_r & opcode_a_accept_r) | slot1_valid_r) & ~take_interrupt_i;
 assign fetch1_accept_o      = ((slot1_valid_r & opcode_a_accept_r) | (opcode_b_accept_r)) & ~take_interrupt_i;
-
-assign stall_w              = pipe0_stall_raw_w | pipe1_stall_raw_w;
+assign e1_stall_w           = pipe0_stall_raw_w | pipe1_stall_raw_w; // --- MUDANÇA: Renomeado de 'stall_w'
 
 //-------------------------------------------------------------
 // Register File
 //------------------------------------------------------------- 
-wire [31:0] issue_a_ra_value_w;
-wire [31:0] issue_a_rb_value_w;
-wire [31:0] issue_b_ra_value_w;
-wire [31:0] issue_b_rb_value_w;
+// --- MUDANÇA: Declarações dos wires movidas para o topo do módulo ---
 
 // Register file: 2W4R
 biriscv_regfile
@@ -771,13 +929,13 @@ u_regfile
 );
 
 //-------------------------------------------------------------
-// Issue Slot 0
+// Issue Slot 0 (Estágio X2 - Bypass/Dispatch)
 //------------------------------------------------------------- 
-assign opcode0_opcode_o = opcode_a_r;
-assign opcode0_pc_o     = opcode_a_pc_r;
-assign opcode0_rd_idx_o = issue_a_rd_idx_w;
-assign opcode0_ra_idx_o = issue_a_ra_idx_w;
-assign opcode0_rb_idx_o = issue_a_rb_idx_w;
+assign opcode0_opcode_o = x2_pipe0_opcode_q; // --- MUDANÇA: usa reg X2
+assign opcode0_pc_o     = x2_pipe0_pc_q;     // --- MUDANÇA: usa reg X2
+assign opcode0_rd_idx_o = x2_pipe0_rd_idx_q; // --- MUDANÇA: usa reg X2
+assign opcode0_ra_idx_o = x2_pipe0_ra_idx_q; // --- MUDANÇA: usa reg X2
+assign opcode0_rb_idx_o = x2_pipe0_rb_idx_q; // --- MUDANÇA: usa reg X2
 assign opcode0_invalid_o= 1'b0; 
 
 reg [31:0] issue_a_ra_value_r;
@@ -785,47 +943,44 @@ reg [31:0] issue_a_rb_value_r;
 
 always @ *
 begin
-    // NOTE: Newest version of operand takes priority
-    issue_a_ra_value_r = issue_a_ra_value_w;
-    issue_a_rb_value_r = issue_a_rb_value_w;
+    // --- MUDANÇA: Ponto de partida agora é o valor lido do RegFile, salvo no reg X2 ---
+    issue_a_ra_value_r = x2_pipe0_ra_val_q;
+    issue_a_rb_value_r = x2_pipe0_rb_val_q;
 
     // Bypass - WB
-    if (pipe0_rd_wb_w == issue_a_ra_idx_w)
+    if (pipe0_rd_wb_w == x2_pipe0_ra_idx_q) // --- MUDANÇA: usa reg X2
         issue_a_ra_value_r = pipe0_result_wb_w;
-    if (pipe0_rd_wb_w == issue_a_rb_idx_w)
+    if (pipe0_rd_wb_w == x2_pipe0_rb_idx_q) // --- MUDANÇA: usa reg X2
         issue_a_rb_value_r = pipe0_result_wb_w;
-
-    if (pipe1_rd_wb_w == issue_a_ra_idx_w)
+    if (pipe1_rd_wb_w == x2_pipe0_ra_idx_q) // --- MUDANÇA: usa reg X2
         issue_a_ra_value_r = pipe1_result_wb_w;
-    if (pipe1_rd_wb_w == issue_a_rb_idx_w)
+    if (pipe1_rd_wb_w == x2_pipe0_rb_idx_q) // --- MUDANÇA: usa reg X2
         issue_a_rb_value_r = pipe1_result_wb_w;
 
     // Bypass - E2
-    if (pipe0_rd_e2_w == issue_a_ra_idx_w)
+    if (pipe0_rd_e2_w == x2_pipe0_ra_idx_q) // --- MUDANÇA: usa reg X2
         issue_a_ra_value_r = pipe0_result_e2_w;
-    if (pipe0_rd_e2_w == issue_a_rb_idx_w)
+    if (pipe0_rd_e2_w == x2_pipe0_rb_idx_q) // --- MUDANÇA: usa reg X2
         issue_a_rb_value_r = pipe0_result_e2_w;
-
-    if (pipe1_rd_e2_w == issue_a_ra_idx_w)
+    if (pipe1_rd_e2_w == x2_pipe0_ra_idx_q) // --- MUDANÇA: usa reg X2
         issue_a_ra_value_r = pipe1_result_e2_w;
-    if (pipe1_rd_e2_w == issue_a_rb_idx_w)
+    if (pipe1_rd_e2_w == x2_pipe0_rb_idx_q) // --- MUDANÇA: usa reg X2
         issue_a_rb_value_r = pipe1_result_e2_w;
 
     // Bypass - E1
-    if (pipe0_rd_e1_w == issue_a_ra_idx_w)
+    if (pipe0_rd_e1_w == x2_pipe0_ra_idx_q) // --- MUDANÇA: usa reg X2
         issue_a_ra_value_r = writeback_exec0_value_i;
-    if (pipe0_rd_e1_w == issue_a_rb_idx_w)
+    if (pipe0_rd_e1_w == x2_pipe0_rb_idx_q) // --- MUDANÇA: usa reg X2
         issue_a_rb_value_r = writeback_exec0_value_i;
-
-    if (pipe1_rd_e1_w == issue_a_ra_idx_w)
+    if (pipe1_rd_e1_w == x2_pipe0_ra_idx_q) // --- MUDANÇA: usa reg X2
         issue_a_ra_value_r = writeback_exec1_value_i;
-    if (pipe1_rd_e1_w == issue_a_rb_idx_w)
+    if (pipe1_rd_e1_w == x2_pipe0_rb_idx_q) // --- MUDANÇA: usa reg X2
         issue_a_rb_value_r = writeback_exec1_value_i;
 
     // Reg 0 source
-    if (issue_a_ra_idx_w == 5'b0)
+    if (x2_pipe0_ra_idx_q == 5'b0) // --- MUDANÇA: usa reg X2
         issue_a_ra_value_r = 32'b0;
-    if (issue_a_rb_idx_w == 5'b0)
+    if (x2_pipe0_rb_idx_q == 5'b0) // --- MUDANÇA: usa reg X2
         issue_a_rb_value_r = 32'b0;
 end
 
@@ -833,13 +988,13 @@ assign opcode0_ra_operand_o = issue_a_ra_value_r;
 assign opcode0_rb_operand_o = issue_a_rb_value_r;
 
 //-------------------------------------------------------------
-// Issue Slot 1
+// Issue Slot 1 (Estágio X2 - Bypass/Dispatch)
 //------------------------------------------------------------- 
-assign opcode1_opcode_o = opcode_b_r;
-assign opcode1_pc_o     = opcode_b_pc_r;
-assign opcode1_rd_idx_o = issue_b_rd_idx_w;
-assign opcode1_ra_idx_o = issue_b_ra_idx_w;
-assign opcode1_rb_idx_o = issue_b_rb_idx_w;
+assign opcode1_opcode_o = x2_pipe1_opcode_q; // --- MUDANÇA: usa reg X2
+assign opcode1_pc_o     = x2_pipe1_pc_q;     // --- MUDANÇA: usa reg X2
+assign opcode1_rd_idx_o = x2_pipe1_rd_idx_q; // --- MUDANÇA: usa reg X2
+assign opcode1_ra_idx_o = x2_pipe1_ra_idx_q; // --- MUDANÇA: usa reg X2
+assign opcode1_rb_idx_o = x2_pipe1_rb_idx_q; // --- MUDANÇA: usa reg X2
 assign opcode1_invalid_o= 1'b0;
 
 reg [31:0] issue_b_ra_value_r;
@@ -847,47 +1002,44 @@ reg [31:0] issue_b_rb_value_r;
 
 always @ *
 begin
-    // NOTE: Newest version of operand takes priority
-    issue_b_ra_value_r = issue_b_ra_value_w;
-    issue_b_rb_value_r = issue_b_rb_value_w;
+    // --- MUDANÇA: Ponto de partida agora é o valor lido do RegFile, salvo no reg X2 ---
+    issue_b_ra_value_r = x2_pipe1_ra_val_q;
+    issue_b_rb_value_r = x2_pipe1_rb_val_q;
 
     // Bypass - WB
-    if (pipe0_rd_wb_w == issue_b_ra_idx_w)
+    if (pipe0_rd_wb_w == x2_pipe1_ra_idx_q) // --- MUDANÇA: usa reg X2
         issue_b_ra_value_r = pipe0_result_wb_w;
-    if (pipe0_rd_wb_w == issue_b_rb_idx_w)
+    if (pipe0_rd_wb_w == x2_pipe1_rb_idx_q) // --- MUDANÇA: usa reg X2
         issue_b_rb_value_r = pipe0_result_wb_w;
-
-    if (pipe1_rd_wb_w == issue_b_ra_idx_w)
+    if (pipe1_rd_wb_w == x2_pipe1_ra_idx_q) // --- MUDANÇA: usa reg X2
         issue_b_ra_value_r = pipe1_result_wb_w;
-    if (pipe1_rd_wb_w == issue_b_rb_idx_w)
+    if (pipe1_rd_wb_w == x2_pipe1_rb_idx_q) // --- MUDANÇA: usa reg X2
         issue_b_rb_value_r = pipe1_result_wb_w;
 
     // Bypass - E2
-    if (pipe0_rd_e2_w == issue_b_ra_idx_w)
+    if (pipe0_rd_e2_w == x2_pipe1_ra_idx_q) // --- MUDANÇA: usa reg X2
         issue_b_ra_value_r = pipe0_result_e2_w;
-    if (pipe0_rd_e2_w == issue_b_rb_idx_w)
+    if (pipe0_rd_e2_w == x2_pipe1_rb_idx_q) // --- MUDANÇA: usa reg X2
         issue_b_rb_value_r = pipe0_result_e2_w;
-
-    if (pipe1_rd_e2_w == issue_b_ra_idx_w)
+    if (pipe1_rd_e2_w == x2_pipe1_ra_idx_q) // --- MUDANÇA: usa reg X2
         issue_b_ra_value_r = pipe1_result_e2_w;
-    if (pipe1_rd_e2_w == issue_b_rb_idx_w)
+    if (pipe1_rd_e2_w == x2_pipe1_rb_idx_q) // --- MUDANÇA: usa reg X2
         issue_b_rb_value_r = pipe1_result_e2_w;
 
     // Bypass - E1
-    if (pipe0_rd_e1_w == issue_b_ra_idx_w)
+    if (pipe0_rd_e1_w == x2_pipe1_ra_idx_q) // --- MUDANÇA: usa reg X2
         issue_b_ra_value_r = writeback_exec0_value_i;
-    if (pipe0_rd_e1_w == issue_b_rb_idx_w)
+    if (pipe0_rd_e1_w == x2_pipe1_rb_idx_q) // --- MUDANÇA: usa reg X2
         issue_b_rb_value_r = writeback_exec0_value_i;
-
-    if (pipe1_rd_e1_w == issue_b_ra_idx_w)
+    if (pipe1_rd_e1_w == x2_pipe1_ra_idx_q) // --- MUDANÇA: usa reg X2
         issue_b_ra_value_r = writeback_exec1_value_i;
-    if (pipe1_rd_e1_w == issue_b_rb_idx_w)
+    if (pipe1_rd_e1_w == x2_pipe1_rb_idx_q) // --- MUDANÇA: usa reg X2
         issue_b_rb_value_r = writeback_exec1_value_i;
 
     // Reg 0 source
-    if (issue_b_ra_idx_w == 5'b0)
+    if (x2_pipe1_ra_idx_q == 5'b0) // --- MUDANÇA: usa reg X2
         issue_b_ra_value_r = 32'b0;
-    if (issue_b_rb_idx_w == 5'b0)
+    if (x2_pipe1_rb_idx_q == 5'b0) // --- MUDANÇA: usa reg X2
         issue_b_rb_value_r = 32'b0;
 end
 
@@ -897,11 +1049,12 @@ assign opcode1_rb_operand_o = issue_b_rb_value_r;
 //-------------------------------------------------------------
 // Load store unit
 //-------------------------------------------------------------
-assign lsu_opcode_opcode_o      = pipe1_mux_lsu_r ? opcode1_opcode_o     : opcode0_opcode_o;
-assign lsu_opcode_pc_o          = pipe1_mux_lsu_r ? opcode1_pc_o         : opcode0_pc_o;
-assign lsu_opcode_rd_idx_o      = pipe1_mux_lsu_r ? opcode1_rd_idx_o     : opcode0_rd_idx_o;
-assign lsu_opcode_ra_idx_o      = pipe1_mux_lsu_r ? opcode1_ra_idx_o     : opcode0_ra_idx_o;
-assign lsu_opcode_rb_idx_o      = pipe1_mux_lsu_r ? opcode1_rb_idx_o     : opcode0_rb_idx_o;
+// --- MUDANÇA: MUX da LSU agora é baseado nos regs X2 ---
+assign lsu_opcode_opcode_o      = pipe1_mux_lsu_r ? x2_pipe1_opcode_q : x2_pipe0_opcode_q;
+assign lsu_opcode_pc_o          = pipe1_mux_lsu_r ? x2_pipe1_pc_q     : x2_pipe0_pc_q;
+assign lsu_opcode_rd_idx_o      = pipe1_mux_lsu_r ? x2_pipe1_rd_idx_q : x2_pipe0_rd_idx_q;
+assign lsu_opcode_ra_idx_o      = pipe1_mux_lsu_r ? x2_pipe1_ra_idx_q : x2_pipe0_ra_idx_q;
+assign lsu_opcode_rb_idx_o      = pipe1_mux_lsu_r ? x2_pipe1_rb_idx_q : x2_pipe0_rb_idx_q;
 assign lsu_opcode_ra_operand_o  = pipe1_mux_lsu_r ? opcode1_ra_operand_o : opcode0_ra_operand_o;
 assign lsu_opcode_rb_operand_o  = pipe1_mux_lsu_r ? opcode1_rb_operand_o : opcode0_rb_operand_o;
 assign lsu_opcode_invalid_o     = 1'b0;
@@ -909,11 +1062,12 @@ assign lsu_opcode_invalid_o     = 1'b0;
 //-------------------------------------------------------------
 // Multiply
 //-------------------------------------------------------------
-assign mul_opcode_opcode_o      = pipe1_mux_mul_r ? opcode1_opcode_o     : opcode0_opcode_o;
-assign mul_opcode_pc_o          = pipe1_mux_mul_r ? opcode1_pc_o         : opcode0_pc_o;
-assign mul_opcode_rd_idx_o      = pipe1_mux_mul_r ? opcode1_rd_idx_o     : opcode0_rd_idx_o;
-assign mul_opcode_ra_idx_o      = pipe1_mux_mul_r ? opcode1_ra_idx_o     : opcode0_ra_idx_o;
-assign mul_opcode_rb_idx_o      = pipe1_mux_mul_r ? opcode1_rb_idx_o     : opcode0_rb_idx_o;
+// --- MUDANÇA: MUX do Multiplicador agora é baseado nos regs X2 ---
+assign mul_opcode_opcode_o      = pipe1_mux_mul_r ? x2_pipe1_opcode_q : x2_pipe0_opcode_q;
+assign mul_opcode_pc_o          = pipe1_mux_mul_r ? x2_pipe1_pc_q     : x2_pipe0_pc_q;
+assign mul_opcode_rd_idx_o      = pipe1_mux_mul_r ? x2_pipe1_rd_idx_q : x2_pipe0_rd_idx_q;
+assign mul_opcode_ra_idx_o      = pipe1_mux_mul_r ? x2_pipe1_ra_idx_q : x2_pipe0_ra_idx_q;
+assign mul_opcode_rb_idx_o      = pipe1_mux_mul_r ? x2_pipe1_rb_idx_q : x2_pipe0_rb_idx_q;
 assign mul_opcode_ra_operand_o  = pipe1_mux_mul_r ? opcode1_ra_operand_o : opcode0_ra_operand_o;
 assign mul_opcode_rb_operand_o  = pipe1_mux_mul_r ? opcode1_rb_operand_o : opcode0_rb_operand_o;
 assign mul_opcode_invalid_o     = 1'b0;
@@ -921,15 +1075,16 @@ assign mul_opcode_invalid_o     = 1'b0;
 //-------------------------------------------------------------
 // CSR unit
 //-------------------------------------------------------------
-assign csr_opcode_valid_o       = opcode_a_issue_r & ~take_interrupt_i;
-assign csr_opcode_opcode_o      = opcode0_opcode_o;
-assign csr_opcode_pc_o          = opcode0_pc_o;
-assign csr_opcode_rd_idx_o      = opcode0_rd_idx_o;
-assign csr_opcode_ra_idx_o      = opcode0_ra_idx_o;
-assign csr_opcode_rb_idx_o      = opcode0_rb_idx_o;
-assign csr_opcode_ra_operand_o  = opcode0_ra_operand_o;
-assign csr_opcode_rb_operand_o  = opcode0_rb_operand_o;
-assign csr_opcode_invalid_o     = opcode_a_issue_r && issue_a_invalid_w;
+// --- MUDANÇA: Unidade CSR agora é alimentada pelo reg X2 ---
+assign csr_opcode_valid_o       = x2_pipe0_valid_q & ~x2_pipe0_ctrl_q[`PCINFO_INTR];
+assign csr_opcode_opcode_o      = x2_pipe0_opcode_q;
+assign csr_opcode_pc_o          = x2_pipe0_pc_q;
+assign csr_opcode_rd_idx_o      = x2_pipe0_rd_idx_q;
+assign csr_opcode_ra_idx_o      = x2_pipe0_ra_idx_q;
+assign csr_opcode_rb_idx_o      = x2_pipe0_rb_idx_q;
+assign csr_opcode_ra_operand_o  = opcode0_ra_operand_o; // Já passou pelo Bypass
+assign csr_opcode_rb_operand_o  = opcode0_rb_operand_o; // Já passou pelo Bypass
+assign csr_opcode_invalid_o     = x2_pipe0_valid_q && issue_a_invalid_w; // A flag 'invalid' vem do X1
 
 //-------------------------------------------------------------
 // Checker Interface
@@ -942,11 +1097,11 @@ u_pipe0_dec0_verif
     ,.pc_i(pipe0_pc_wb_w)
     ,.opcode_i(pipe0_opc_wb_w)
 );
-
 wire [4:0] v_pipe0_rs1_w = pipe0_opc_wb_w[19:15];
 wire [4:0] v_pipe0_rs2_w = pipe0_opc_wb_w[24:20];
 
-function [0:0] complete_valid0; /*verilator public*/
+function [0:0] complete_valid0;
+/*verilator public*/
 begin
     complete_valid0 = pipe0_valid_wb_w;
 end
@@ -961,7 +1116,8 @@ begin
     complete_opcode0 = pipe0_opc_wb_w;
 end
 endfunction
-function [4:0] complete_ra0; /*verilator public*/
+function [4:0] complete_ra0;
+/*verilator public*/
 begin
     complete_ra0 = v_pipe0_rs1_w;
 end
@@ -976,7 +1132,8 @@ begin
     complete_rd0 = pipe0_rd_wb_w;
 end
 endfunction
-function [31:0] complete_ra_val0; /*verilator public*/
+function [31:0] complete_ra_val0;
+/*verilator public*/
 begin
     complete_ra_val0 = pipe0_ra_val_wb_w;
 end
@@ -1011,7 +1168,8 @@ begin
     complete_valid1 = pipe1_valid_wb_w;
 end
 endfunction
-function [31:0] complete_pc1; /*verilator public*/
+function [31:0] complete_pc1;
+/*verilator public*/
 begin
     complete_pc1 = pipe1_pc_wb_w;
 end
@@ -1026,7 +1184,8 @@ begin
     complete_ra1 = v_pipe1_rs1_w;
 end
 endfunction
-function [4:0] complete_rb1; /*verilator public*/
+function [4:0] complete_rb1;
+/*verilator public*/
 begin
     complete_rb1 = v_pipe1_rs2_w;
 end
@@ -1041,12 +1200,14 @@ begin
     complete_ra_val1 = pipe1_ra_val_wb_w;
 end
 endfunction
-function [31:0] complete_rb_val1; /*verilator public*/
+function [31:0] complete_rb_val1;
+/*verilator public*/
 begin
     complete_rb_val1 = pipe1_rb_val_wb_w;
 end
 endfunction
-function [31:0] complete_rd_val1; /*verilator public*/
+function [31:0] complete_rd_val1;
+/*verilator public*/
 begin
     if (|pipe1_rd_wb_w)
         complete_rd_val1 = pipe1_result_wb_w;
@@ -1054,7 +1215,8 @@ begin
         complete_rd_val1 = 32'b0;
 end
 endfunction
-function [5:0] complete_exception; /*verilator public*/
+function [5:0] complete_exception;
+/*verilator public*/
 begin
     complete_exception = pipe0_exception_wb_w | pipe1_exception_wb_w;
 end

@@ -53,9 +53,6 @@ module biriscv_exec
     ,output [  1:0]  branch_d_priv_o
     ,output [ 31:0]  writeback_value_o
 );
-
-
-
 //-----------------------------------------------------------------
 // Includes
 //-----------------------------------------------------------------
@@ -226,33 +223,31 @@ end
 
 
 //-------------------------------------------------------------
-// ALU (Pipelined version for higher frequency)
-//-------------------------------------------------------------
-// ALU (Pipelined version for higher frequency)
+// ALU
 //-------------------------------------------------------------
 wire [31:0]  alu_p_w;
-wire         alu_valid_w;
-biriscv_alu_pipelined
+
+biriscv_alu
 u_alu
 (
-    .clk_i(clk_i),
-    .rst_i(rst_i),
-    .valid_i(opcode_valid_i & ~hold_i),
+    // --- MUDANÇA: Conexão de clock adicionada para corrigir o erro do LINT ---
+    .clk(clk_i), 
+    // --- FIM DA MUDANÇA ---
+    
     .alu_op_i(alu_func_r),
     .alu_a_i(alu_input_a_r),
     .alu_b_i(alu_input_b_r),
-    .alu_p_o(alu_p_w),
-    .valid_o(alu_valid_w)
+    .alu_p_o(alu_p_w)
 );
 
 //-------------------------------------------------------------
-// Output register (ALU already has internal pipeline)
+// Flop ALU output
 //-------------------------------------------------------------
 reg [31:0] result_q;
 always @ (posedge clk_i or posedge rst_i)
 if (rst_i)
     result_q  <= 32'b0;
-else if (alu_valid_w)
+else if (~hold_i)
     result_q <= alu_p_w;
 
 assign writeback_value_o  = result_q;
@@ -294,7 +289,7 @@ end
 endfunction
 
 //-------------------------------------------------------------
-// Execute - Branch operations (with pipelined comparison)
+// Execute - Branch operations
 //-------------------------------------------------------------
 reg        branch_r;
 reg        branch_taken_r;
@@ -303,49 +298,6 @@ reg        branch_call_r;
 reg        branch_ret_r;
 reg        branch_jmp_r;
 
-// Pipeline stage 1: Register operands for comparison
-reg [31:0] branch_op_a_q;
-reg [31:0] branch_op_b_q;
-reg [31:0] branch_pc_q;
-reg [31:0] branch_target_q;
-reg [31:0] branch_opcode_q;
-reg [31:0] branch_jimm20_q;
-reg [31:0] branch_imm12_q;
-reg [ 4:0] branch_ra_idx_q;
-reg [ 4:0] branch_rd_idx_q;
-reg        branch_valid_q;
-
-always @ (posedge clk_i or posedge rst_i)
-begin
-    if (rst_i)
-    begin
-        branch_op_a_q    <= 32'b0;
-        branch_op_b_q    <= 32'b0;
-        branch_pc_q      <= 32'b0;
-        branch_target_q  <= 32'b0;
-        branch_opcode_q  <= 32'b0;
-        branch_jimm20_q  <= 32'b0;
-        branch_imm12_q   <= 32'b0;
-        branch_ra_idx_q  <= 5'b0;
-        branch_rd_idx_q  <= 5'b0;
-        branch_valid_q   <= 1'b0;
-    end
-    else if (~hold_i)
-    begin
-        branch_op_a_q    <= opcode_ra_operand_i;
-        branch_op_b_q    <= opcode_rb_operand_i;
-        branch_pc_q      <= opcode_pc_i;
-        branch_target_q  <= opcode_pc_i + bimm_r;
-        branch_opcode_q  <= opcode_opcode_i;
-        branch_jimm20_q  <= jimm20_r;
-        branch_imm12_q   <= imm12_r;
-        branch_ra_idx_q  <= opcode_ra_idx_i;
-        branch_rd_idx_q  <= opcode_rd_idx_i;
-        branch_valid_q   <= opcode_valid_i;
-    end
-end
-
-// Pipeline stage 2: Compute comparisons
 always @ *
 begin
     branch_r        = 1'b0;
@@ -354,56 +306,56 @@ begin
     branch_ret_r    = 1'b0;
     branch_jmp_r    = 1'b0;
 
-    // Default branch_r target is from pipelined register
-    branch_target_r = branch_target_q;
+    // Default branch_r target is relative to current PC
+    branch_target_r = opcode_pc_i + bimm_r;
 
-    if ((branch_opcode_q & `INST_JAL_MASK) == `INST_JAL) // jal
+    if ((opcode_opcode_i & `INST_JAL_MASK) == `INST_JAL) // jal
     begin
-        branch_r        = branch_valid_q;
-        branch_taken_r  = branch_valid_q;
-        branch_target_r = branch_pc_q + branch_jimm20_q;
-        branch_call_r   = (branch_rd_idx_q == 5'd1); // RA
+        branch_r        = 1'b1;
+        branch_taken_r  = 1'b1;
+        branch_target_r = opcode_pc_i + jimm20_r;
+        branch_call_r   = (opcode_rd_idx_i == 5'd1); // RA
         branch_jmp_r    = 1'b1;
     end
-    else if ((branch_opcode_q & `INST_JALR_MASK) == `INST_JALR) // jalr
+    else if ((opcode_opcode_i & `INST_JALR_MASK) == `INST_JALR) // jalr
     begin
-        branch_r            = branch_valid_q;
-        branch_taken_r      = branch_valid_q;
-        branch_target_r     = branch_op_a_q + branch_imm12_q;
+        branch_r            = 1'b1;
+        branch_taken_r      = 1'b1;
+        branch_target_r     = opcode_ra_operand_i + imm12_r;
         branch_target_r[0]  = 1'b0;
-        branch_ret_r        = (branch_ra_idx_q == 5'd1 && branch_imm12_q[11:0] == 12'b0); // RA
-        branch_call_r       = ~branch_ret_r && (branch_rd_idx_q == 5'd1); // RA
+        branch_ret_r        = (opcode_ra_idx_i == 5'd1 && imm12_r[11:0] == 12'b0); // RA
+        branch_call_r       = ~branch_ret_r && (opcode_rd_idx_i == 5'd1); // RA
         branch_jmp_r        = ~(branch_call_r | branch_ret_r);
     end
-    else if ((branch_opcode_q & `INST_BEQ_MASK) == `INST_BEQ) // beq
+    else if ((opcode_opcode_i & `INST_BEQ_MASK) == `INST_BEQ) // beq
     begin
-        branch_r      = branch_valid_q;
-        branch_taken_r= (branch_op_a_q == branch_op_b_q);
+        branch_r      = 1'b1;
+        branch_taken_r= (opcode_ra_operand_i == opcode_rb_operand_i);
     end
-    else if ((branch_opcode_q & `INST_BNE_MASK) == `INST_BNE) // bne
+    else if ((opcode_opcode_i & `INST_BNE_MASK) == `INST_BNE) // bne
     begin
-        branch_r      = branch_valid_q;    
-        branch_taken_r= (branch_op_a_q != branch_op_b_q);
+        branch_r      = 1'b1;
+        branch_taken_r= (opcode_ra_operand_i != opcode_rb_operand_i);
     end
-    else if ((branch_opcode_q & `INST_BLT_MASK) == `INST_BLT) // blt
+    else if ((opcode_opcode_i & `INST_BLT_MASK) == `INST_BLT) // blt
     begin
-        branch_r      = branch_valid_q;
-        branch_taken_r= less_than_signed(branch_op_a_q, branch_op_b_q);
+        branch_r      = 1'b1;
+        branch_taken_r= less_than_signed(opcode_ra_operand_i, opcode_rb_operand_i);
     end
-    else if ((branch_opcode_q & `INST_BGE_MASK) == `INST_BGE) // bge
+    else if ((opcode_opcode_i & `INST_BGE_MASK) == `INST_BGE) // bge
     begin
-        branch_r      = branch_valid_q;    
-        branch_taken_r= greater_than_signed(branch_op_a_q, branch_op_b_q) | (branch_op_a_q == branch_op_b_q);
+        branch_r      = 1'b1;
+        branch_taken_r= greater_than_signed(opcode_ra_operand_i,opcode_rb_operand_i) | (opcode_ra_operand_i == opcode_rb_operand_i);
     end
-    else if ((branch_opcode_q & `INST_BLTU_MASK) == `INST_BLTU) // bltu
+    else if ((opcode_opcode_i & `INST_BLTU_MASK) == `INST_BLTU) // bltu
     begin
-        branch_r      = branch_valid_q;    
-        branch_taken_r= (branch_op_a_q < branch_op_b_q);
+        branch_r      = 1'b1;
+        branch_taken_r= (opcode_ra_operand_i < opcode_rb_operand_i);
     end
-    else if ((branch_opcode_q & `INST_BGEU_MASK) == `INST_BGEU) // bgeu
+    else if ((opcode_opcode_i & `INST_BGEU_MASK) == `INST_BGEU) // bgeu
     begin
-        branch_r      = branch_valid_q;
-        branch_taken_r= (branch_op_a_q >= branch_op_b_q);
+        branch_r      = 1'b1;
+        branch_taken_r= (opcode_ra_operand_i >= opcode_rb_operand_i);
     end
 end
 
@@ -445,7 +397,6 @@ assign branch_pc_o        = pc_x_q;
 assign branch_is_call_o   = branch_call_q;
 assign branch_is_ret_o    = branch_ret_q;
 assign branch_is_jmp_o    = branch_jmp_q;
-
 assign branch_d_request_o = (branch_r && opcode_valid_i && branch_taken_r);
 assign branch_d_pc_o      = branch_target_r;
 assign branch_d_priv_o    = 2'b0; // don't care
