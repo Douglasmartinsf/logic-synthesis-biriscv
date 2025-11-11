@@ -1,0 +1,33 @@
+# Synthesis results and reports (large files that change frequently)
+synthesis/reports/
+synthesis/deliverables/
+synthesis/deliverables_server/
+synthesis/work/
+
+# Synthesis backup
+synthesis/scripts_backup/
+
+# Duplicate SDC file (already in constraints/)
+synthesis/riscv_core.sdc
+
+# Alternative HDL reading methods documentation
+synthesis/scripts/READ_HDL_ALTERNATIVES.txt
+
+# Compiled binaries and generated files
+*.bin
+*.elf
+*.o
+*.out
+
+# Waveform files
+*.vcd
+*.vpd
+*.fsdb
+
+# Log files
+*.log
+*.cmd
+
+# OS files
+.DS_Store
+Thumbs.db
