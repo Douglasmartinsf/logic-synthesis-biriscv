@@ -8,130 +8,184 @@
 //
 //                     License: Apache 2.0
 //-----------------------------------------------------------------
+// Copyright 2020 Ultra-Embedded.com
+// 
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+// 
+//     http://www.apache.org/licenses/LICENSE-2.0
+// 
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//-----------------------------------------------------------------
 module biriscv_alu
 (
-    // Clock
-     input           clk,
-
     // Inputs
-     input  [  3:0]  alu_op_i,
-     input  [ 31:0]  alu_a_i,
-     input  [ 31:0]  alu_b_i,
+     input  [  3:0]  alu_op_i
+    ,input  [ 31:0]  alu_a_i
+    ,input  [ 31:0]  alu_b_i
 
-     // Outputs
-     output [ 31:0]  alu_p_o
+    // Outputs
+    ,output [ 31:0]  alu_p_o
 );
+
 //-----------------------------------------------------------------
 // Includes
 //-----------------------------------------------------------------
 `include "biriscv_defs.v"
 
 //-----------------------------------------------------------------
-// Input Registers
-//-----------------------------------------------------------------
-reg [3:0]   alu_op_r;
-reg [31:0]  alu_a_r;
-reg [31:0]  alu_b_r;
-
-always @(posedge clk) begin
-    alu_op_r <= alu_op_i;
-    alu_a_r  <= alu_a_i;
-    alu_b_r  <= alu_b_i;
-end
-
-//-----------------------------------------------------------------
-// Internal Registers (Combinational logic)
+// Registers
 //-----------------------------------------------------------------
 reg [31:0]      result_r;
 
-// --- MUDANÇA INICIA ---
-// Registradores intermediários do shifter removidos.
-// Adicionada uma wire 'signed' para o shift aritmético.
-wire signed [31:0] alu_a_signed = alu_a_r;
-// --- MUDANÇA TERMINA ---
+reg [31:16]     shift_right_fill_r;
+reg [31:0]      shift_right_1_r;
+reg [31:0]      shift_right_2_r;
+reg [31:0]      shift_right_4_r;
+reg [31:0]      shift_right_8_r;
 
-wire [31:0]     sub_res_w = alu_a_r - alu_b_r;
+reg [31:0]      shift_left_1_r;
+reg [31:0]      shift_left_2_r;
+reg [31:0]      shift_left_4_r;
+reg [31:0]      shift_left_8_r;
+
+wire [31:0]     sub_res_w = alu_a_i - alu_b_i;
 
 //-----------------------------------------------------------------
-// ALU (combinational section)
+// ALU
 //-----------------------------------------------------------------
-always @(*) begin
+always @ (alu_op_i or alu_a_i or alu_b_i or sub_res_w)
+begin
+    shift_right_fill_r = 16'b0;
+    shift_right_1_r = 32'b0;
+    shift_right_2_r = 32'b0;
+    shift_right_4_r = 32'b0;
+    shift_right_8_r = 32'b0;
 
-    // --- MUDANÇA INICIA ---
-    // Inicializações dos regs do shifter antigo foram removidas.
-    // --- MUDANÇA TERMINA ---
+    shift_left_1_r = 32'b0;
+    shift_left_2_r = 32'b0;
+    shift_left_4_r = 32'b0;
+    shift_left_8_r = 32'b0;
 
-    case (alu_op_r)
+    case (alu_op_i)
        //----------------------------------------------
        // Shift Left
        //----------------------------------------------   
        `ALU_SHIFTL :
        begin
-            // --- MUDANÇA INICIA ---
-            // Substituído o ripple shifter de 5 estágios por um
-            // barrel shifter paralelo inferido pelo sintetizador.
-            // O shift só considera os 5 bits inferiores de alu_b_r.
-            result_r = alu_a_r << alu_b_r[4:0];
-            // --- MUDANÇA TERMINA ---
+            if (alu_b_i[0] == 1'b1)
+                shift_left_1_r = {alu_a_i[30:0],1'b0};
+            else
+                shift_left_1_r = alu_a_i;
+
+            if (alu_b_i[1] == 1'b1)
+                shift_left_2_r = {shift_left_1_r[29:0],2'b00};
+            else
+                shift_left_2_r = shift_left_1_r;
+
+            if (alu_b_i[2] == 1'b1)
+                shift_left_4_r = {shift_left_2_r[27:0],4'b0000};
+            else
+                shift_left_4_r = shift_left_2_r;
+
+            if (alu_b_i[3] == 1'b1)
+                shift_left_8_r = {shift_left_4_r[23:0],8'b00000000};
+            else
+                shift_left_8_r = shift_left_4_r;
+
+            if (alu_b_i[4] == 1'b1)
+                result_r = {shift_left_8_r[15:0],16'b0000000000000000};
+            else
+                result_r = shift_left_8_r;
        end
        //----------------------------------------------
        // Shift Right
        //----------------------------------------------
        `ALU_SHIFTR, `ALU_SHIFTR_ARITH:
        begin
-            // --- MUDANÇA INICIA ---
-            // Substituído o ripple shifter por operadores de shift
-            // nativos do Verilog. O sintetizador criará o hardware
-            // de shift mais rápido para '>>' (lógico) e '>>>' (aritmético).
-
-            if (alu_op_r == `ALU_SHIFTR_ARITH)
-                // Shift aritmético (usa a wire 'signed')
-                result_r = alu_a_signed >>> alu_b_r[4:0];
+            // Arithmetic shift? Fill with 1's if MSB set
+            if (alu_a_i[31] == 1'b1 && alu_op_i == `ALU_SHIFTR_ARITH)
+                shift_right_fill_r = 16'b1111111111111111;
             else
-                // Shift lógico
-                result_r = alu_a_r >> alu_b_r[4:0];
-            // --- MUDANÇA TERMINA ---
+                shift_right_fill_r = 16'b0000000000000000;
+
+            if (alu_b_i[0] == 1'b1)
+                shift_right_1_r = {shift_right_fill_r[31], alu_a_i[31:1]};
+            else
+                shift_right_1_r = alu_a_i;
+
+            if (alu_b_i[1] == 1'b1)
+                shift_right_2_r = {shift_right_fill_r[31:30], shift_right_1_r[31:2]};
+            else
+                shift_right_2_r = shift_right_1_r;
+
+            if (alu_b_i[2] == 1'b1)
+                shift_right_4_r = {shift_right_fill_r[31:28], shift_right_2_r[31:4]};
+            else
+                shift_right_4_r = shift_right_2_r;
+
+            if (alu_b_i[3] == 1'b1)
+                shift_right_8_r = {shift_right_fill_r[31:24], shift_right_4_r[31:8]};
+            else
+                shift_right_8_r = shift_right_4_r;
+
+            if (alu_b_i[4] == 1'b1)
+                result_r = {shift_right_fill_r[31:16], shift_right_8_r[31:16]};
+            else
+                result_r = shift_right_8_r;
        end       
        //----------------------------------------------
        // Arithmetic
        //----------------------------------------------
        `ALU_ADD : 
-            result_r = alu_a_r + alu_b_r;
+       begin
+            result_r      = (alu_a_i + alu_b_i);
+       end
        `ALU_SUB : 
-            result_r = sub_res_w;
+       begin
+            result_r      = sub_res_w;
+       end
        //----------------------------------------------
        // Logical
        //----------------------------------------------       
        `ALU_AND : 
-            result_r = alu_a_r & alu_b_r;
+       begin
+            result_r      = (alu_a_i & alu_b_i);
+       end
        `ALU_OR  : 
-            result_r = alu_a_r | alu_b_r;
+       begin
+            result_r      = (alu_a_i | alu_b_i);
+       end
        `ALU_XOR : 
-            result_r = alu_a_r ^ alu_b_r;
+       begin
+            result_r      = (alu_a_i ^ alu_b_i);
+       end
        //----------------------------------------------
-       // Comparison
+       // Comparision
        //----------------------------------------------
        `ALU_LESS_THAN : 
-            result_r = (alu_a_r < alu_b_r) ? 32'h1 : 32'h0;
+       begin
+            result_r      = (alu_a_i < alu_b_i) ? 32'h1 : 32'h0;
+       end
        `ALU_LESS_THAN_SIGNED : 
        begin
-            if (alu_a_r[31] != alu_b_r[31])
-                result_r = alu_a_r[31] ? 32'h1 : 32'h0;
+            if (alu_a_i[31] != alu_b_i[31])
+                result_r  = alu_a_i[31] ? 32'h1 : 32'h0;
             else
-                result_r = sub_res_w[31] ? 32'h1 : 32'h0;            
+                result_r  = sub_res_w[31] ? 32'h1 : 32'h0;            
        end       
        default  : 
-            result_r = alu_a_r;
+       begin
+            result_r      = alu_a_i;
+       end
     endcase
 end
 
-//-----------------------------------------------------------------
-// Output Register
-//-----------------------------------------------------------------
-reg [31:0] alu_p_r;
-always @(posedge clk)
-    alu_p_r <= result_r;
-
-assign alu_p_o = alu_p_r;
+assign alu_p_o    = result_r;
 
 endmodule

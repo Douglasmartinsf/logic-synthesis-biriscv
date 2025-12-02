@@ -53,6 +53,9 @@ module biriscv_exec
     ,output [  1:0]  branch_d_priv_o
     ,output [ 31:0]  writeback_value_o
 );
+
+
+
 //-----------------------------------------------------------------
 // Includes
 //-----------------------------------------------------------------
@@ -226,14 +229,9 @@ end
 // ALU
 //-------------------------------------------------------------
 wire [31:0]  alu_p_w;
-
 biriscv_alu
 u_alu
 (
-    // --- MUDANÇA: Conexão de clock adicionada para corrigir o erro do LINT ---
-    .clk(clk_i), 
-    // --- FIM DA MUDANÇA ---
-    
     .alu_op_i(alu_func_r),
     .alu_a_i(alu_input_a_r),
     .alu_b_i(alu_input_b_r),
@@ -334,7 +332,7 @@ begin
     end
     else if ((opcode_opcode_i & `INST_BNE_MASK) == `INST_BNE) // bne
     begin
-        branch_r      = 1'b1;
+        branch_r      = 1'b1;    
         branch_taken_r= (opcode_ra_operand_i != opcode_rb_operand_i);
     end
     else if ((opcode_opcode_i & `INST_BLT_MASK) == `INST_BLT) // blt
@@ -344,12 +342,12 @@ begin
     end
     else if ((opcode_opcode_i & `INST_BGE_MASK) == `INST_BGE) // bge
     begin
-        branch_r      = 1'b1;
+        branch_r      = 1'b1;    
         branch_taken_r= greater_than_signed(opcode_ra_operand_i,opcode_rb_operand_i) | (opcode_ra_operand_i == opcode_rb_operand_i);
     end
     else if ((opcode_opcode_i & `INST_BLTU_MASK) == `INST_BLTU) // bltu
     begin
-        branch_r      = 1'b1;
+        branch_r      = 1'b1;    
         branch_taken_r= (opcode_ra_operand_i < opcode_rb_operand_i);
     end
     else if ((opcode_opcode_i & `INST_BGEU_MASK) == `INST_BGEU) // bgeu
@@ -397,6 +395,7 @@ assign branch_pc_o        = pc_x_q;
 assign branch_is_call_o   = branch_call_q;
 assign branch_is_ret_o    = branch_ret_q;
 assign branch_is_jmp_o    = branch_jmp_q;
+
 assign branch_d_request_o = (branch_r && opcode_valid_i && branch_taken_r);
 assign branch_d_pc_o      = branch_target_r;
 assign branch_d_priv_o    = 2'b0; // don't care

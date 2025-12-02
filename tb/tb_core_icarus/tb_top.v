@@ -19,28 +19,26 @@ begin
         $dumpvars(0, tb_top);
     end
 
-    // Reset
-    clk = 0;
-    rst = 1;
-    repeat (5) @(posedge clk);
-    rst = 0;
-
-    // Load TCM memory
+    // Load TCM memory BEFORE releasing reset
     for (i=0;i<131072;i=i+1)
         mem[i] = 0;
 
-    f = $fopen("./build/tcm.bin", "r");
+    f = $fopen("tcm.bin", "r");
     i = $fread(mem, f);
     for (i=0;i<131072;i=i+1)
         u_mem.write(i, mem[i]);
+
+    // Reset sequence - memory is now loaded
+    rst = 1;
+    repeat (5) @(posedge clk);
+    $display("Memory loaded. Releasing reset...");
+    rst = 0;
 end
 
 initial
 begin
-    forever
-    begin 
-        clk = #5 ~clk;
-    end
+    clk = 0;
+    forever #5 clk = ~clk;
 end
 
 wire          mem_i_rd_w;
@@ -85,7 +83,7 @@ u_dut
     ,.mem_i_error_i(mem_i_error_w)
     ,.mem_i_inst_i(mem_i_inst_w)
     ,.intr_i(1'b0)
-    ,.reset_vector_i(32'h80000000)
+    ,.reset_vector_i(32'h80000054)
     ,.cpu_id_i('b0)
 
     // Outputs
@@ -153,5 +151,26 @@ trace_inst_1
 );
 
 `endif
+
+initial begin
+    // Aguarda tempo suficiente para o algoritmo rodar (ajuste se necessario)
+    #500000; 
+    
+    $display("\n=============================================");
+    $display("=== DUMP DE MEMORIA (Valores Nao-Nulos) ===");
+    $display("=============================================");
+    
+    // Varre a memoria (ajuste o tamanho 16384 conforme a declaracao real da u_ram)
+    for (i = 0; i < 16384; i = i + 1) begin
+        // Acesse a hierarquia interna da RAM (verifique se eh u_mem.u_ram.ram ou similar)
+        // Usamos !== 0 para pegar qualquer coisa valida
+        if (u_mem.u_ram.ram[i] !== 0) begin
+             $display("RAM_IDX[%0d] (Addr aprox 0x%x) = %h", i, i*4, u_mem.u_ram.ram[i]);
+        end
+    end
+    
+    $display("=============================================\n");
+    $finish;
+end
 
 endmodule
