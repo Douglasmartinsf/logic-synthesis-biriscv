@@ -142,6 +142,38 @@ syn_generic ${HDL_NAME}
 #-----------------------------------------------------------------------------
 puts "Running technology mapping..."
 syn_map ${HDL_NAME}
+
+#-----------------------------------------------------------------------------
+# Post-mapping optimization (Quick Win - reduzir fanout e upsizing)
+#-----------------------------------------------------------------------------
+puts "Applying post-mapping optimizations..."
+
+# Limitar fanout de sinais críticos (reduz delays de roteamento)
+set_max_fanout 10 [all_inputs]
+
+# Limitar transições (força buffering) - aplicar ao design atual
+set_max_transition 0.15 [get_db designs .name]
+
+# Otimizar caminho crítico: upsize gates fracos
+set critical_paths [get_timing_paths -max_paths 50 -slack_lesser_than 500]
+if {[llength $critical_paths] > 0} {
+    puts "  Found [llength $critical_paths] near-critical paths"
+    # Incrementar size de gates com drive < 4 no caminho crítico
+    set all_pins [get_db $critical_paths .pins]
+    if {[llength $all_pins] > 0} {
+        set all_hinsts [get_db $all_pins .hinst]
+        set weak_gates [get_db $all_hinsts -if {.base_cell.drive_strength < 4}]
+        if {[llength $weak_gates] > 0} {
+            catch {size_cell $weak_gates -higher_drive}
+            puts "  Attempted to upsize [llength $weak_gates] weak gates"
+        }
+    }
+}
+
+# Re-otimizar após modificações
+puts "Re-optimizing after post-map changes..."
+syn_opt -incr
+
 get_db insts .base_cell.name -u ;# List all cell names used
 
 #-----------------------------------------------------------------------------
