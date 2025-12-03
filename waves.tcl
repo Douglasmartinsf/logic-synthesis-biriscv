@@ -18,6 +18,7 @@ set my_signals [list \
     tb_top.u_dut.mem_d_data_rd_i \
     tb_top.u_dut.mem_d_ack_i \
     tb_top.u_dut.mem_d_accept_i \
+    tb_top.u_mem.u_ram.ram \
 ]
 
 # 3. Envia os sinais para a janela
