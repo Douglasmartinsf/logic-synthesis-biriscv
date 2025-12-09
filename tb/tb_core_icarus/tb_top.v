@@ -33,6 +33,13 @@ begin
     repeat (5) @(posedge clk);
     $display("Memory loaded. Releasing reset...");
     rst = 0;
+    
+    // --- BOOTLOADER PATCH ---
+    // Inicializa o Stack Pointer (x2) para ~8KB (0x1FF0) + Offset Base (0x80000000)
+    // Isso evita wrap-around em memórias pequenas e mantém a pilha longe do código.
+    #1;
+    u_dut.u_issue.u_regfile.REGFILE.reg_r2_q = 32'h80001FF0;
+    $display("PATCH: SP (x2) inicializado forcadamente para 0x80001FF0");
 end
 
 initial

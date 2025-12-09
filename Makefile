@@ -136,58 +136,66 @@ sim-gui:
 		-gui \
 		-input ../../waves.tcl
 
-## Simulation with SDF notation (no GUI)
+## Simulation with SDF notation (no GUI) - Customizada para Bubble Sort @ 185 MHz
 sim-pos-syn:
 	@if [ "$(OP_CORNER)" = "WORST" ]; then \
 	  cd "$(PROJECT_DIR)/synthesis/work" && \
 	  xrun -clean && \
-	  xrun -iocondsort $(EXTRA_AwRGS) -mess -64bit -noneg_tchk  \
-	    +define+TRACE=0 +define+ELF_FILE=\"$(PROJECT_DIR)/riscv-app-gen/quicksort/quicksort.elf\" \
+	  cp $(PROJECT_DIR)/riscv-app-gen/bubblesort/bubblesort.bin tcm.bin && \
+	  xrun -iocondsort $(EXTRA_ARGS) -mess -64bit -noneg_tchk  \
+	    +define+TRACE=1 \
 	    "$(TECH_DIR)/gsclib045_all_v4.4/gsclib045/verilog/slow_vdd1v0_basicCells.v" \
 	    "$(PROJECT_DIR)/synthesis/deliverables/$(FREQ_MHZ)_MHz/$(OP_CORNER)/$(DESIGNS).v" \
 	    "$(PROJECT_DIR)/tb/tb_core_icarus/tcm_mem_ram.v" \
 	    "$(PROJECT_DIR)/tb/tb_core_icarus/tcm_mem.v" \
 	    "$(PROJECT_DIR)/tb/tb_core_icarus/tb_top_postsyn.v" \
-	    -top tb_top -timescale 1ns/1ps -access +rwc; \
+	    -top tb_top -timescale 1ns/1ps -access +rwc \
+	    -input ../../monitor.tcl; \
 	fi
 	@if [ "$(OP_CORNER)" = "BEST" ]; then \
 	  cd "$(PROJECT_DIR)/synthesis/work" && \
 	  xrun -clean && \
+	  cp $(PROJECT_DIR)/riscv-app-gen/bubblesort/bubblesort.bin tcm.bin && \
 	  xrun -iocondsort $(EXTRA_ARGS) -mess -64bit -noneg_tchk \
-	    +define+TRACE=0 +define+ELF_FILE=\"$(PROJECT_DIR)/riscv-app-gen/quicksort/quicksort.elf\" \
+	    +define+TRACE=1 \
 	    "$(TECH_DIR)/gsclib045_all_v4.4/gsclib045/verilog/fast_vdd1v2_basicCells.v" \
 	    "$(PROJECT_DIR)/synthesis/deliverables/$(FREQ_MHZ)_MHz/$(OP_CORNER)/$(DESIGNS).v" \
 	    "$(PROJECT_DIR)/tb/tb_core_icarus/tcm_mem_ram.v" \
 	    "$(PROJECT_DIR)/tb/tb_core_icarus/tcm_mem.v" \
 	    "$(PROJECT_DIR)/tb/tb_core_icarus/tb_top_postsyn.v" \
-	    -top tb_top -timescale 1ns/1ps -access +rwc; \
+	    -top tb_top -timescale 1ns/1ps -access +rwc \
+	    -input ../../monitor.tcl; \
 	fi
 
-## Simulation with SDF notation (with GUI)
+## Simulation with SDF notation (with GUI) - Customizada para Bubble Sort @ 185 MHz
 sim-pos-syn-gui:
 	@if [ "$(OP_CORNER)" = "WORST" ]; then \
 	  cd "$(PROJECT_DIR)/synthesis/work" && \
 	  xrun -clean && \
+	  cp $(PROJECT_DIR)/riscv-app-gen/bubblesort/bubblesort.bin tcm.bin && \
 	  xrun -iocondsort $(EXTRA_ARGS) -mess -64bit -noneg_tchk \
-	    +define+TRACE=1 +define+ELF_FILE=\"$(PROJECT_DIR)/riscv-app-gen/quicksort/quicksort.elf\" \
+	    +define+TRACE=1 \
 	    "$(TECH_DIR)/gsclib045_all_v4.4/gsclib045/verilog/slow_vdd1v0_basicCells.v" \
 	    "$(PROJECT_DIR)/synthesis/deliverables/$(FREQ_MHZ)_MHz/$(OP_CORNER)/$(DESIGNS).v" \
 	    "$(PROJECT_DIR)/tb/tb_core_icarus/tcm_mem_ram.v" \
 	    "$(PROJECT_DIR)/tb/tb_core_icarus/tcm_mem.v" \
 	    "$(PROJECT_DIR)/tb/tb_core_icarus/tb_top_postsyn.v" \
-	    -top tb_top  -timescale 1ns/1ps -access +rwc -gui; \
+	    -top tb_top  -timescale 1ns/1ps -access +rwc -gui \
+	    -input ../../waves.tcl; \
 	fi
 	@if [ "$(OP_CORNER)" = "BEST" ]; then \
 	  cd "$(PROJECT_DIR)/synthesis/work" && \
 	  xrun -clean && \
+	  cp $(PROJECT_DIR)/riscv-app-gen/bubblesort/bubblesort.bin tcm.bin && \
 	  xrun -iocondsort $(EXTRA_ARGS) -mess -64bit -noneg_tchk \
-	    +define+TRACE=1 +define+ELF_FILE=\"$(PROJECT_DIR)/riscv-app-gen/quicksort/quicksort.elf\" \
+	    +define+TRACE=1 \
 	    "$(TECH_DIR)/gsclib045_all_v4.4/gsclib045/verilog/fast_vdd1v2_basicCells.v" \
 	    "$(PROJECT_DIR)/synthesis/deliverables/$(FREQ_MHZ)_MHz/$(OP_CORNER)/$(DESIGNS).v" \
 	    "$(PROJECT_DIR)/tb/tb_core_icarus/tcm_mem_ram.v" \
 	    "$(PROJECT_DIR)/tb/tb_core_icarus/tcm_mem.v" \
 	    "$(PROJECT_DIR)/tb/tb_core_icarus/tb_top_postsyn.v" \
-	    -top tb_top -timescale 1ns/1ps -access +rwc -gui; \
+	    -top tb_top -timescale 1ns/1ps -access +rwc -gui \
+	    -input ../../waves.tcl; \
 	fi
 
 .PHONY: run-synth compile-sdf sim-pos-syn sim-pos-syn-gui sim sim-gui

@@ -12,8 +12,8 @@ integer i;
 integer f;
 integer __wd_count;
 
-// Clock generation - 190 MHz = 5.263ns period (half-period = 2.6315ns)
-always #2.6315 clk = ~clk;
+// Clock generation - 185 MHz = 5.405ns period (half-period = 2.7027ns)
+always #2.7027 clk = ~clk;
 
 initial
 begin
@@ -31,19 +31,22 @@ begin
     repeat (5) @(posedge clk);
     rst = 0;
 
-    // Load TCM memory
+    // Load TCM memory using $fread (binary format)
     for (i=0;i<131072;i=i+1)
         mem[i] = 0;
 
-    if (`ELF_FILE != "")
-    begin
-        $display("Loading %s", `ELF_FILE);
-        $readmemh(`ELF_FILE, mem);
-    end
+    f = $fopen("tcm.bin", "r");
+    i = $fread(mem, f);
+    $fclose(f);
+    $display("Memory loaded (%0d bytes). Releasing reset...", i);
 
     // Load into target memory
     for (i=0;i<131072;i=i+1)
         u_tcm.u_ram.ram[i/8][((i%8)*8)+7-:8] = mem[i];
+
+    $display("WARNING: Stack Pointer (SP) patch not applied in post-synthesis simulation");
+    $display("         Netlist is flattened - cannot access internal registers directly");
+    $display("         The program should initialize SP via _start assembly entry point");
 
     @(posedge clk);
 end

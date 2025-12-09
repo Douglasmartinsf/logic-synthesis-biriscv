@@ -19,6 +19,14 @@ set my_signals [list \
     tb_top.u_dut.mem_d_ack_i \
     tb_top.u_dut.mem_d_accept_i \
     tb_top.u_mem.u_ram.ram \
+    tb_top.u_dut.u_exec0.u_alu.alu_op_i \
+    tb_top.u_dut.u_exec0.u_alu.alu_a_i \
+    tb_top.u_dut.u_exec0.u_alu.alu_b_i \
+    tb_top.u_dut.u_exec0.u_alu.alu_p_o \
+    tb_top.u_dut.u_issue.u_regfile.ra0_i \
+    tb_top.u_dut.u_issue.u_regfile.rb0_i \
+    tb_top.u_dut.u_issue.u_regfile.ra0_value_o \
+    tb_top.u_dut.u_issue.u_regfile.rb0_value_o \
 ]
 
 # 3. Envia os sinais para a janela

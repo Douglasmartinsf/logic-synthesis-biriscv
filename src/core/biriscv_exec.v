@@ -230,10 +230,6 @@ wire [31:0]  alu_p_w;
 biriscv_alu
 u_alu
 (
-    // --- MUDANÇA: Conexão de clock adicionada para corrigir o erro do LINT ---
-    .clk(clk_i), 
-    // --- FIM DA MUDANÇA ---
-    
     .alu_op_i(alu_func_r),
     .alu_a_i(alu_input_a_r),
     .alu_b_i(alu_input_b_r),

@@ -10,9 +10,6 @@
 //-----------------------------------------------------------------
 module biriscv_alu
 (
-    // Clock
-     input           clk,
-
     // Inputs
      input  [  3:0]  alu_op_i,
      input  [ 31:0]  alu_a_i,
@@ -27,17 +24,15 @@ module biriscv_alu
 `include "biriscv_defs.v"
 
 //-----------------------------------------------------------------
-// Input Registers
+// Internal Wires (Purely Combinational ALU)
 //-----------------------------------------------------------------
-reg [3:0]   alu_op_r;
-reg [31:0]  alu_a_r;
-reg [31:0]  alu_b_r;
+wire [3:0]   alu_op_r;
+wire [31:0]  alu_a_r;
+wire [31:0]  alu_b_r;
 
-always @(posedge clk) begin
-    alu_op_r <= alu_op_i;
-    alu_a_r  <= alu_a_i;
-    alu_b_r  <= alu_b_i;
-end
+assign alu_op_r = alu_op_i;
+assign alu_a_r  = alu_a_i;
+assign alu_b_r  = alu_b_i;
 
 //-----------------------------------------------------------------
 // Internal Registers (Combinational logic)
@@ -126,12 +121,8 @@ always @(*) begin
 end
 
 //-----------------------------------------------------------------
-// Output Register
+// Output (Combinational)
 //-----------------------------------------------------------------
-reg [31:0] alu_p_r;
-always @(posedge clk)
-    alu_p_r <= result_r;
-
-assign alu_p_o = alu_p_r;
+assign alu_p_o = result_r;
 
 endmodule
