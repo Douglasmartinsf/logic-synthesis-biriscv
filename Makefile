@@ -142,15 +142,15 @@ sim-pos-syn:
 	  cd "$(PROJECT_DIR)/synthesis/work" && \
 	  xrun -clean && \
 	  cp $(PROJECT_DIR)/riscv-app-gen/bubblesort/bubblesort.bin tcm.bin && \
-	  xrun -iocondsort $(EXTRA_ARGS) -mess -64bit -noneg_tchk  \
-	    +define+TRACE=1 \
-	    "$(TECH_DIR)/gsclib045_all_v4.4/gsclib045/verilog/slow_vdd1v0_basicCells.v" \
-	    "$(PROJECT_DIR)/synthesis/deliverables/$(FREQ_MHZ)_MHz/$(OP_CORNER)/$(DESIGNS).v" \
-	    "$(PROJECT_DIR)/tb/tb_core_icarus/tcm_mem_ram.v" \
-	    "$(PROJECT_DIR)/tb/tb_core_icarus/tcm_mem.v" \
-	    "$(PROJECT_DIR)/tb/tb_core_icarus/tb_top_postsyn.v" \
-	    -top tb_top -timescale 1ns/1ps -access +rwc \
-	    -input ../../monitor.tcl; \
+	xrun -iocondsort $(EXTRA_ARGS) -mess -64bit -noneg_tchk  \
+	+define+TRACE=1 +define+POSTSYN=1 \
+	"$(TECH_DIR)/gsclib045_all_v4.4/gsclib045/verilog/slow_vdd1v0_basicCells.v" \
+	"$(PROJECT_DIR)/synthesis/deliverables/$(FREQ_MHZ)_MHz/$(OP_CORNER)/$(DESIGNS).v" \
+	"$(PROJECT_DIR)/tb/tb_core_icarus/tcm_mem_ram.v" \
+	"$(PROJECT_DIR)/tb/tb_core_icarus/tcm_mem.v" \
+	"$(PROJECT_DIR)/tb/tb_core_icarus/tb_top.v" \
+	-top tb_top -timescale 1ns/1ps -access +rwc \
+	-input ../../monitor.tcl; \
 	fi
 	@if [ "$(OP_CORNER)" = "BEST" ]; then \
 	  cd "$(PROJECT_DIR)/synthesis/work" && \

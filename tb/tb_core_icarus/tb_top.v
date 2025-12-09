@@ -25,8 +25,19 @@ begin
 
     f = $fopen("tcm.bin", "r");
     i = $fread(mem, f);
+
+`ifdef POSTSYN
+    // POSTSYN: perform memory writes slightly after time-0 to avoid delta-loop
+    // and give the simulator a chance to settle netlist elaboration.
+    #1;
+    @(posedge clk);
     for (i=0;i<131072;i=i+1)
         u_mem.write(i, mem[i]);
+`else
+    // RTL / pre-synthesis: original immediate memory fill (keeps current behavior)
+    for (i=0;i<131072;i=i+1)
+        u_mem.write(i, mem[i]);
+`endif
 
     // Reset sequence - memory is now loaded
     rst = 1;
@@ -34,18 +45,23 @@ begin
     $display("Memory loaded. Releasing reset...");
     rst = 0;
     
-    // --- BOOTLOADER PATCH ---
+`ifndef POSTSYN
+    // --- BOOTLOADER PATCH (applied only in RTL simulation) ---
     // Inicializa o Stack Pointer (x2) para ~8KB (0x1FF0) + Offset Base (0x80000000)
     // Isso evita wrap-around em memórias pequenas e mantém a pilha longe do código.
     #1;
     u_dut.u_issue.u_regfile.REGFILE.reg_r2_q = 32'h80001FF0;
     $display("PATCH: SP (x2) inicializado forcadamente para 0x80001FF0");
+`else
+    $display("POSTSYN mode: SP patch disabled (netlist flattened). Ensure binary initializes SP.");
+`endif
 end
 
 initial
 begin
     clk = 0;
-    forever #5 clk = ~clk;
+    // 185 MHz = 5.405 ns period -> half-period = 2.7027 ns
+    forever #2.7027 clk = ~clk;
 end
 
 wire          mem_i_rd_w;

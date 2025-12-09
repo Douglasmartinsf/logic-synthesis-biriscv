@@ -13,6 +13,9 @@ integer f;
 integer __wd_count;
 
 // Clock generation - 185 MHz = 5.405ns period (half-period = 2.7027ns)
+// Initialize clock before any toggling to avoid races at t=0 that can
+// create infinite zero-time loops in flattened netlists.
+initial clk = 0;
 always #2.7027 clk = ~clk;
 
 initial
