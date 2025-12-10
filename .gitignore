@@ -31,3 +31,6 @@ synthesis/scripts/READ_HDL_ALTERNATIVES.txt
 # OS files
 .DS_Store
 Thumbs.db
+
+# Ignore auxiliary scripts folder (PowerShell sync scripts, etc.)
+scripts/

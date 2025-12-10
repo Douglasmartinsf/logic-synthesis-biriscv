@@ -97,59 +97,120 @@ compile-sdf:
 	cd $(PROJECT_DIR)/synthesis/work && \
 	xmsdfc -iocondsort  -compile $(PROJECT_DIR)/synthesis/deliverables/$(FREQ_MHZ)_MHz/$(OP_CORNER)/$(DESIGNS).sdf
 
-## Simulation with no GUI
+## Simulation with no GUI (Customizada para Bubble Sort)
 sim:
-	cd $(PROJECT_DIR)/frontend/work && \
+	mkdir -p $(PROJECT_DIR)/synthesis/work
+	cd $(PROJECT_DIR)/synthesis/work && \
 	xrun -clean && \
-	xrun -f filelist.txt -mess -64bit $(EXTRA_ARGS) -top ${DESIGNS}_tb -timescale '1ns/1ps' -access +rwc
+	cp $(PROJECT_DIR)/riscv-app-gen/bubblesort/bubblesort.bin tcm.bin && \
+	xrun -v2001 -v93 \
+		-F ../../src/core/filelist_xcelium.flist \
+		../../tb/tb_core_icarus/tb_top.v \
+		../../tb/tb_core_icarus/tcm_mem.v \
+		../../tb/tb_core_icarus/tcm_mem_ram.v \
+		../../tb/tb_core_icarus/biriscv_trace_sim_gls.sv \
+		-incdir ../../src/core \
+		-top tb_top \
+		-timescale '1ns/1ps' \
+		-access +rwc \
+		+define+TRACE=1 \
+		-input ../../monitor.tcl
 
-## Simulation with GUI
+## Simulation with GUI (Customizada para Bubble Sort)
 sim-gui:
-	cd $(PROJECT_DIR)/frontend/work && \
+	mkdir -p $(PROJECT_DIR)/synthesis/work
+	cd $(PROJECT_DIR)/synthesis/work && \
 	xrun -clean && \
-	xrun -f filelist.txt -mess -64bit -top ${DESIGNS}_tb -timescale '1ns/1ps' -access +rwc -gui
+	cp $(PROJECT_DIR)/riscv-app-gen/bubblesort/bubblesort.bin tcm.bin && \
+	xrun -v2001 -v93 \
+		-F ../../src/core/filelist_xcelium.flist \
+		../../tb/tb_core_icarus/tb_top.v \
+		../../tb/tb_core_icarus/tcm_mem.v \
+		../../tb/tb_core_icarus/tcm_mem_ram.v \
+		../../tb/tb_core_icarus/biriscv_trace_sim_gls.sv \
+		-incdir ../../src/core \
+		-top tb_top \
+		-timescale '1ns/1ps' \
+		-access +rwc \
+		+define+TRACE=1 \
+		-gui \
+		-input ../../waves.tcl
 
-## Simulation with SDF notation (no GUI)
+## Simulation with SDF notation (no GUI) - Customizada para Bubble Sort @ 185 MHz
 sim-pos-syn:
 	@if [ "$(OP_CORNER)" = "WORST" ]; then \
 	  cd "$(PROJECT_DIR)/synthesis/work" && \
 	  xrun -clean && \
-	  xrun -iocondsort $(EXTRA_ARGS) -mess -64bit -noneg_tchk  \
-	    "$(TECH_DIR)/gsclib045_all_v4.4/gsclib045/verilog/slow_vdd1v0_basicCells.v" \
-	    "$(PROJECT_DIR)/synthesis/deliverables/$(FREQ_MHZ)_MHz/$(OP_CORNER)/$(DESIGNS).v" \
-	    "$(PROJECT_DIR)/frontend/hdl/$(DESIGNS)_tb.$(FILE_EXTENSION)" \
-	    -top ${DESIGNS}_tb -timescale 1ns/1ps -access +rwc -sdf_cmd_file ${PROJECT_DIR}/frontend/sdf_cmd_file.cmd; \
+	  cp $(PROJECT_DIR)/riscv-app-gen/bubblesort/bubblesort.bin tcm.bin && \
+	xrun -iocondsort $(EXTRA_ARGS) -mess -64bit -noneg_tchk  \
+	+define+TRACE=1 +define+POSTSYN=1 \
+	"$(TECH_DIR)/gsclib045_all_v4.4/gsclib045/verilog/slow_vdd1v0_basicCells.v" \
+	"$(PROJECT_DIR)/synthesis/deliverables/$(FREQ_MHZ)_MHz/$(OP_CORNER)/$(DESIGNS).v" \
+	"$(PROJECT_DIR)/tb/tb_core_icarus/biriscv_trace_sim_gls.sv" \
+	"$(PROJECT_DIR)/tb/tb_core_icarus/tcm_mem_ram.v" \
+	"$(PROJECT_DIR)/tb/tb_core_icarus/tcm_mem.v" \
+	"$(PROJECT_DIR)/tb/tb_core_icarus/tb_top.v" \
+	-top tb_top -timescale 1ns/1ps -access +rwc \
+	-input ../../monitor.tcl; \
 	fi
 	@if [ "$(OP_CORNER)" = "BEST" ]; then \
 	  cd "$(PROJECT_DIR)/synthesis/work" && \
 	  xrun -clean && \
-	  xrun -iocondsort $(EXTRA_ARGS) -mess -64bit -noneg_tchk \
-	    "$(TECH_DIR)/gsclib045_all_v4.4/gsclib045/verilog/fast_vdd1v2_basicCells.v" \
-	    "$(PROJECT_DIR)/synthesis/deliverables/$(FREQ_MHZ)_MHz/$(OP_CORNER)/$(DESIGNS).v" \
-	    "$(PROJECT_DIR)/frontend/hdl/$(DESIGNS)_tb.$(FILE_EXTENSION)" \
-	    -top ${DESIGNS}_tb -timescale 1ns/1ps -access +rwc -sdf_cmd_file ${PROJECT_DIR}/frontend/sdf_cmd_file.cmd; \
+	  cp $(PROJECT_DIR)/riscv-app-gen/bubblesort/bubblesort.bin tcm.bin && \
+		xrun -iocondsort $(EXTRA_ARGS) -mess -64bit -noneg_tchk \
+			+define+TRACE=1 +define+POSTSYN=1 \
+		"$(TECH_DIR)/gsclib045_all_v4.4/gsclib045/verilog/fast_vdd1v2_basicCells.v" \
+		"$(PROJECT_DIR)/synthesis/deliverables/$(FREQ_MHZ)_MHz/$(OP_CORNER)/$(DESIGNS).v" \
+		"$(PROJECT_DIR)/tb/tb_core_icarus/biriscv_trace_sim_gls.sv" \
+		"$(PROJECT_DIR)/tb/tb_core_icarus/tcm_mem_ram.v" \
+		"$(PROJECT_DIR)/tb/tb_core_icarus/tcm_mem.v" \
+		"$(PROJECT_DIR)/tb/tb_core_icarus/tb_top.v" \
+	    -top tb_top -timescale 1ns/1ps -access +rwc \
+	    -input ../../monitor.tcl; \
 	fi
 
-## Simulation with SDF notation (with GUI)
+## Simulation with SDF notation (with GUI) - Customizada para Bubble Sort @ 185 MHz
 sim-pos-syn-gui:
 	@if [ "$(OP_CORNER)" = "WORST" ]; then \
 	  cd "$(PROJECT_DIR)/synthesis/work" && \
 	  xrun -clean && \
-	  xrun -iocondsort $(EXTRA_ARGS) -mess -64bit -noneg_tchk \
-	    "$(TECH_DIR)/gsclib045_all_v4.4/gsclib045/verilog/slow_vdd1v0_basicCells.v" \
-	    "$(PROJECT_DIR)/synthesis/deliverables/$(FREQ_MHZ)_MHz/$(OP_CORNER)/$(DESIGNS).v" \
-	    "$(PROJECT_DIR)/frontend/hdl/$(DESIGNS)_tb.$(FILE_EXTENSION)" \
-	    -top ${DESIGNS}_tb  -timescale 1ns/1ps -access +rwc -gui -sdf_cmd_file ${PROJECT_DIR}/frontend/sdf_cmd_file.cmd; \
+	  cp $(PROJECT_DIR)/riscv-app-gen/bubblesort/bubblesort.bin tcm.bin && \
+		xrun -iocondsort $(EXTRA_ARGS) -mess -64bit -noneg_tchk \
+		+define+TRACE=1 +define+POSTSYN=1 \
+		"$(TECH_DIR)/gsclib045_all_v4.4/gsclib045/verilog/slow_vdd1v0_basicCells.v" \
+		"$(PROJECT_DIR)/synthesis/deliverables/$(FREQ_MHZ)_MHz/$(OP_CORNER)/$(DESIGNS).v" \
+		"$(PROJECT_DIR)/tb/tb_core_icarus/biriscv_trace_sim_gls.sv" \
+		"$(PROJECT_DIR)/tb/tb_core_icarus/tcm_mem_ram.v" \
+		"$(PROJECT_DIR)/tb/tb_core_icarus/tcm_mem.v" \
+		"$(PROJECT_DIR)/tb/tb_core_icarus/tb_top.v" \
+	    -top tb_top  -timescale 1ns/1ps -access +rwc -gui \
+	    -input ../../waves.tcl; \
 	fi
 	@if [ "$(OP_CORNER)" = "BEST" ]; then \
 	  cd "$(PROJECT_DIR)/synthesis/work" && \
 	  xrun -clean && \
-	  xrun -iocondsort $(EXTRA_ARGS) -mess -64bit -noneg_tchk \
-	    "$(TECH_DIR)/gsclib045_all_v4.4/gsclib045/verilog/fast_vdd1v2_basicCells.v" \
-	    "$(PROJECT_DIR)/synthesis/deliverables/$(FREQ_MHZ)_MHz/$(OP_CORNER)/$(DESIGNS).v" \
-	    "$(PROJECT_DIR)/frontend/hdl/$(DESIGNS)_tb.$(FILE_EXTENSION)" \
-	    -top ${DESIGNS}_tb -timescale 1ns/1ps -access +rwc -gui -sdf_cmd_file ${PROJECT_DIR}/frontend/sdf_cmd_file.cmd; \
+	  cp $(PROJECT_DIR)/riscv-app-gen/bubblesort/bubblesort.bin tcm.bin && \
+		xrun -iocondsort $(EXTRA_ARGS) -mess -64bit -noneg_tchk \
+		+define+TRACE=1 \
+		"$(TECH_DIR)/gsclib045_all_v4.4/gsclib045/verilog/fast_vdd1v2_basicCells.v" \
+		"$(PROJECT_DIR)/synthesis/deliverables/$(FREQ_MHZ)_MHz/$(OP_CORNER)/$(DESIGNS).v" \
+		"$(PROJECT_DIR)/tb/tb_core_icarus/biriscv_trace_sim_gls.sv" \
+		"$(PROJECT_DIR)/tb/tb_core_icarus/tcm_mem_ram.v" \
+		"$(PROJECT_DIR)/tb/tb_core_icarus/tcm_mem.v" \
+		"$(PROJECT_DIR)/tb/tb_core_icarus/tb_top.v" \
+	    -top tb_top -timescale 1ns/1ps -access +rwc -gui \
+	    -input ../../waves.tcl; \
 	fi
 
 .PHONY: run-synth compile-sdf sim-pos-syn sim-pos-syn-gui sim sim-gui
+
+
+
+RTL_DIR    = ../../src/core
+TESTS_DIR  = ../../tb
+TB         ?= 1
+FLAGS += -access +rwc +define+TRACE=1 -input ../../monitor.tcl
+ifeq ($(GUI),1)
+	FLAGS += -gui -input ../../waves.tcl
+endif
 

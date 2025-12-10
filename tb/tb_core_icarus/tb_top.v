@@ -11,36 +11,66 @@ integer f;
 
 initial
 begin
-    $display("Starting bench");
+   // 1. Inicializacao em Reset Ativo (High)
+   // O codigo original sugeria que rst=1 eh o estado de reset.
+   clk = 0;
+   rst = 1;
+   $display("Starting bench - Time: %0t", $time);
 
-    if (`TRACE)
-    begin
-        $dumpfile("waveform.vcd");
-        $dumpvars(0, tb_top);
-    end
+   // Trace (Opcional)
+   if (`TRACE) begin
+       $dumpfile("waveform.vcd");
+       $dumpvars(0, tb_top);
+   end
 
-    // Reset
-    clk = 0;
-    rst = 1;
-    repeat (5) @(posedge clk);
-    rst = 0;
+   // 2. Carregar SDF (CRITICO: Antes de usar a memoria)
+`ifdef POSTSYN
+   $display("Loading SDF for Gate-Level Simulation...");
+   // Ajuste o caminho se necessario (ex: 185_MHz ou 190_MHz)
+   $sdf_annotate("../deliverables/185_MHz/WORST/riscv_core.sdf", u_dut, , "sdf.log", "TYPICAL", "1.0:1.0:1.0", "FROM_MTM");
+   $display("SDF Loaded Successfully.");
+`endif
 
-    // Load TCM memory
-    for (i=0;i<131072;i=i+1)
-        mem[i] = 0;
+   // 3. Carregar Memoria TCM
+   for (i=0;i<131072;i=i+1)
+       mem[i] = 0;
 
-    f = $fopen("./build/tcm.bin", "r");
-    i = $fread(mem, f);
-    for (i=0;i<131072;i=i+1)
-        u_mem.write(i, mem[i]);
+   f = $fopen("tcm.bin", "r");
+   if (f == 0) begin
+       $display("ERRO: Nao foi possivel abrir tcm.bin");
+       $finish;
+   end
+   i = $fread(mem, f);
+   $fclose(f);
+
+   for (i=0;i<131072;i=i+1)
+       u_mem.write(i, mem[i]);
+
+   $display("Memory loaded. Holding Reset...");
+
+   // 4. Sequencia de Reset (Logica 1 -> 0)
+   // Mantem em 1 (Reset) por um tempo
+   rst = 1;
+   repeat (20) @(posedge clk);
+
+   $display("Releasing reset (rst -> 0)...");
+   rst = 0; // Libera o processador para rodar
+
+    // Patch do Stack Pointer (Apenas RTL)
+    /*
+    `ifndef POSTSYN
+    #1;
+    u_dut.u_issue.u_regfile.REGFILE.reg_r2_q = 32'h80001FF0;
+    $display("PATCH: SP (x2) inicializado para 0x80001FF0");
+    `endif
+    */
 end
 
 initial
 begin
-    forever
-    begin 
-        clk = #5 ~clk;
-    end
+    clk = 0;
+    // 185 MHz = 5.405 ns period -> half-period = 2.7027 ns
+    forever #2.7027 clk = ~clk;
 end
 
 wire          mem_i_rd_w;
@@ -85,7 +115,7 @@ u_dut
     ,.mem_i_error_i(mem_i_error_w)
     ,.mem_i_inst_i(mem_i_inst_w)
     ,.intr_i(1'b0)
-    ,.reset_vector_i(32'h80000000)
+    ,.reset_vector_i(32'h80000054)
     ,.cpu_id_i('b0)
 
     // Outputs
@@ -153,5 +183,26 @@ trace_inst_1
 );
 
 `endif
+
+initial begin
+    // Aguarda tempo suficiente para o algoritmo rodar (ajuste se necessario)
+    #500000; 
+    
+    $display("\n=============================================");
+    $display("=== DUMP DE MEMORIA (Valores Nao-Nulos) ===");
+    $display("=============================================");
+    
+    // Varre a memoria (ajuste o tamanho 16384 conforme a declaracao real da u_ram)
+    for (i = 0; i < 16384; i = i + 1) begin
+        // Acesse a hierarquia interna da RAM (verifique se eh u_mem.u_ram.ram ou similar)
+        // Usamos !== 0 para pegar qualquer coisa valida
+        if (u_mem.u_ram.ram[i] !== 0) begin
+             $display("RAM_IDX[%0d] (Addr aprox 0x%x) = %h", i, i*4, u_mem.u_ram.ram[i]);
+        end
+    end
+    
+    $display("=============================================\n");
+    $finish;
+end
 
 endmodule

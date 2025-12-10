@@ -72,7 +72,6 @@ puts "Reading biRISC-V RTL files..."
 read_hdl -language ${HDL_LANG} \
     biriscv_defs.v \
     biriscv_alu.v \
-    biriscv_alu_pipelined.v \
     biriscv_csr_regfile.v \
     biriscv_csr.v \
     biriscv_decoder.v \
@@ -143,6 +142,27 @@ syn_generic ${HDL_NAME}
 #-----------------------------------------------------------------------------
 puts "Running technology mapping..."
 syn_map ${HDL_NAME}
+
+#-----------------------------------------------------------------------------
+# Post-mapping optimization (Quick Win - reduzir fanout e upsizing)
+#-----------------------------------------------------------------------------
+puts "Applying post-mapping optimizations..."
+
+# Limitar fanout de sinais críticos (reduz delays de roteamento)
+set_max_fanout 10 [all_inputs]
+
+# Limitar transições (força buffering) - aplicar ao design atual
+set_max_transition 0.15 [get_db designs .name]
+
+# Otimizar caminho crítico: upsize gates fracos
+# Comando get_timing_paths inválido - usando report timing nativo do Genus
+puts "--- Reporting Critical Paths (WNS Check) ---"
+report timing -nworst 50 -path_type full_clock
+
+# Re-otimizar após modificações
+puts "Re-optimizing after post-map changes..."
+syn_opt -incr
+
 get_db insts .base_cell.name -u ;# List all cell names used
 
 #-----------------------------------------------------------------------------
