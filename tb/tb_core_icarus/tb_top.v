@@ -11,50 +11,59 @@ integer f;
 
 initial
 begin
-    $display("Starting bench");
+   // 1. Inicializacao em Reset Ativo (High)
+   // O codigo original sugeria que rst=1 eh o estado de reset.
+   clk = 0;
+   rst = 1;
+   $display("Starting bench - Time: %0t", $time);
 
-    if (`TRACE)
-    begin
-        $dumpfile("waveform.vcd");
-        $dumpvars(0, tb_top);
-    end
+   // Trace (Opcional)
+   if (`TRACE) begin
+       $dumpfile("waveform.vcd");
+       $dumpvars(0, tb_top);
+   end
 
-    // Load TCM memory BEFORE releasing reset
-    for (i=0;i<131072;i=i+1)
-        mem[i] = 0;
-
-    f = $fopen("tcm.bin", "r");
-    i = $fread(mem, f);
-
+   // 2. Carregar SDF (CRITICO: Antes de usar a memoria)
 `ifdef POSTSYN
-    // POSTSYN: perform memory writes slightly after time-0 to avoid delta-loop
-    // and give the simulator a chance to settle netlist elaboration.
-    #1;
-    @(posedge clk);
-    for (i=0;i<131072;i=i+1)
-        u_mem.write(i, mem[i]);
-`else
-    // RTL / pre-synthesis: original immediate memory fill (keeps current behavior)
-    for (i=0;i<131072;i=i+1)
-        u_mem.write(i, mem[i]);
+   $display("Loading SDF for Gate-Level Simulation...");
+   // Ajuste o caminho se necessario (ex: 185_MHz ou 190_MHz)
+   $sdf_annotate("../deliverables/185_MHz/WORST/riscv_core.sdf", u_dut, , "sdf.log", "TYPICAL", "1.0:1.0:1.0", "FROM_MTM");
+   $display("SDF Loaded Successfully.");
 `endif
 
-    // Reset sequence - memory is now loaded
-    rst = 1;
-    repeat (5) @(posedge clk);
-    $display("Memory loaded. Releasing reset...");
-    rst = 0;
-    
-`ifndef POSTSYN
-    // --- BOOTLOADER PATCH (applied only in RTL simulation) ---
-    // Inicializa o Stack Pointer (x2) para ~8KB (0x1FF0) + Offset Base (0x80000000)
-    // Isso evita wrap-around em memórias pequenas e mantém a pilha longe do código.
+   // 3. Carregar Memoria TCM
+   for (i=0;i<131072;i=i+1)
+       mem[i] = 0;
+
+   f = $fopen("tcm.bin", "r");
+   if (f == 0) begin
+       $display("ERRO: Nao foi possivel abrir tcm.bin");
+       $finish;
+   end
+   i = $fread(mem, f);
+   $fclose(f);
+
+   for (i=0;i<131072;i=i+1)
+       u_mem.write(i, mem[i]);
+
+   $display("Memory loaded. Holding Reset...");
+
+   // 4. Sequencia de Reset (Logica 1 -> 0)
+   // Mantem em 1 (Reset) por um tempo
+   rst = 1;
+   repeat (20) @(posedge clk);
+
+   $display("Releasing reset (rst -> 0)...");
+   rst = 0; // Libera o processador para rodar
+
+    // Patch do Stack Pointer (Apenas RTL)
+    /*
+    `ifndef POSTSYN
     #1;
     u_dut.u_issue.u_regfile.REGFILE.reg_r2_q = 32'h80001FF0;
-    $display("PATCH: SP (x2) inicializado forcadamente para 0x80001FF0");
-`else
-    $display("POSTSYN mode: SP patch disabled (netlist flattened). Ensure binary initializes SP.");
-`endif
+    $display("PATCH: SP (x2) inicializado para 0x80001FF0");
+    `endif
+    */
 end
 
 initial
