@@ -1,270 +1,145 @@
-# biRISC-V Logic Synthesis
+# Synthesis and Simulation Guide
 
-Scripts e configurações para síntese lógica do processador biRISC-V usando Cadence Genus.
+[Back to the case study](../README.md) · [Archived results](reports_versions/README.md)
 
-## Estrutura
+This guide describes the checked-in biRISC-V flow: **Cadence Genus with GPDK045**, plus Xcelium/SimVision simulation targets. The scripts contain site-specific paths and fixed testbench settings; commands below require the stated local setup. They have been checked against the source, not rerun as part of the documentation update.
 
-```
-synthesis/
-├── scripts/
-│   ├── common/
-│   │   ├── path.tcl          # Definições de diretórios
-│   │   ├── tech.tcl          # Configuração de tecnologia/bibliotecas
-│   │   └── sdf_width_wa.etf  # Workaround para SDF
-│   ├── riscv_core.tcl        # Script principal de síntese
-│   └── run_first.tcl         # Launcher do Genus
-├── constraints/
-│   └── riscv_core.sdc        # Constraints de timing (SDC)
-├── work/                     # Diretório de trabalho do Genus
-├── reports/                  # Relatórios de síntese
-│   └── <FREQ>_MHz/<CORNER>/
-└── deliverables/             # Netlist e SDF gerados
-    └── <FREQ>_MHz/<CORNER>/
-```
+## Requirements
 
-## Uso Rápido
+| Task | Requirements |
+| --- | --- |
+| Read the results | A text viewer; the archived reports are committed |
+| Synthesize the core | Linux, Bash, GNU Make, licensed Cadence Genus, and the expected local GPDK045 libraries |
+| Build a test application | `riscv64-unknown-elf-gcc`, `objcopy`, `objdump`, and `readelf`, with RV32IM / ILP32 support |
+| Run the root simulation targets | Cadence Xcelium (`xrun`); SimVision for GUI inspection |
+| Run gate-level simulation | Matching mapped netlist, SDF, technology cell models, and application binary |
 
-### 1. Preparar ambiente
+The PDK, Cadence tools, and generated netlist/SDF are not included in the current repository tree.
 
-```bash
-# No servidor (via SSH)
-cd /home/u32br/<seu_usuario>/arq3/logic-synthesis-biriscv
+## Flow and configuration
 
-# Ajustar variáveis no Makefile:
-# - USER (seu usuário)
-# - PROJECT_DIR (caminho completo do projeto)
-# - TECH_DIR (caminho do PDK)
-```
+The root [Makefile](../Makefile) exports configuration to the [launcher](scripts/run_first.tcl) and [Genus script](scripts/riscv_core.tcl). Despite its `.tcl` suffix, the launcher is a Bash script. Genus reads the RTL, elaborates `riscv_core`, applies the [SDC constraints](constraints/riscv_core.sdc), performs generic synthesis and technology mapping, then runs incremental optimization and writes reports, netlist, and SDF.
 
-### 2. Criar diretórios
+| Make variable | Current default | Meaning |
+| --- | --- | --- |
+| `PROJECT_DIR` | A site-specific absolute path | Override with the repository's absolute path |
+| `TECH_DIR` | A site-specific GPDK045 path | Override with the local technology installation |
+| `DESIGNS` | `riscv_core` | Top-level design and script basename |
+| `HDL_LANG` | `v2001` | Language used for the processor RTL |
+| `FREQ_MHZ` | `100` | Synthesis target; period is rounded to two decimal places in ns |
+| `OP_CORNER` | `WORST` | Accepts `WORST` or `BEST` |
 
-```bash
-make setup FREQ_MHZ=100 OP_CORNER=WORST
-```
+Pass path overrides on the `make` command line: shell environment values alone do not override the Makefile's ordinary assignments. Use paths without spaces, since the existing scripts do not consistently quote paths.
 
-### 3. Executar síntese
+### Local technology layout
 
-```bash
-make run-synth FREQ_MHZ=100 OP_CORNER=WORST
-```
+Inspect [path.tcl](scripts/common/path.tcl), [tech.tcl](scripts/common/tech.tcl), and [riscv_core.tcl](scripts/riscv_core.tcl) before running. The flow expects:
 
-### 4. Analisar resultados
+- Timing and LEF files beneath `gsclib045_svt_v4.4/gsclib045`, plus the configured I/O LEF directory.
+- `slow_vdd1v0_basicCells.lib` and `fast_vdd1v2_basicCells.lib`, with operating-condition identifiers configured in the main script.
+- QRC data beneath `gpdk045_v_6_0/qrc/rcworst`.
+- Simulation cell models beneath `gsclib045_all_v4.4/gsclib045/verilog`, as referenced by the Makefile.
+
+Both library domains are loaded. `OP_CORNER` selects the default domain, while the QRC path remains set to `rcworst`. Check the selected libraries and operating conditions in each new run's logs; changing the corner label is not a complete multi-corner signoff flow.
+
+## Run synthesis
+
+From the repository root in a configured Linux shell:
 
 ```bash
-# Ver relatórios
-cd synthesis/reports/100_MHz/WORST/
+export PROJECT_DIR="$PWD"
+export TECH_DIR="/path/to/GPDK045"
 
-# Timing (mais importante)
-cat riscv_core_timing.rpt | grep "slack"
+# The launcher changes into this directory before starting Genus.
+mkdir -p "$PROJECT_DIR/synthesis/work"
 
-# Área
-cat riscv_core_area.rpt | grep "Total"
+# The checked-in launcher needs executable permission for this target.
+chmod u+x synthesis/scripts/run_first.tcl
 
-# QoR (Quality of Results)
-cat riscv_core_qor.rpt
+make run-synth PROJECT_DIR="$PROJECT_DIR" TECH_DIR="$TECH_DIR" \
+  FREQ_MHZ=170 OP_CORNER=WORST
 ```
 
-## Parâmetros Configuráveis
+Replace the technology path with the actual installation. There is no `make setup` target in the current Makefile. The Genus script creates report and deliverable directories after elaboration; the working directory must already exist.
 
-### Frequência (FREQ_MHZ)
-- **50 MHz**: Conservador, fácil de atingir timing
-- **100 MHz**: Recomendado para primeira síntese
-- **200 MHz**: Requer otimizações
-- **300+ MHz**: Desafiador, pode precisar pipelining adicional
+This runs the **current RTL** at the requested target. It does not reconstruct the archived `baseline` run: that archive does not specify its exact source revision.
 
-### Corner (OP_CORNER)
-- **WORST**: Worst-case (slow corner, low voltage, high temp)
-- **BEST**: Best-case (fast corner, high voltage, low temp)
+### Constraints in the current scripts
 
-## Módulos Sintetizados
+| Setting | Current value / behavior |
+| --- | --- |
+| Top-level clock / reset port names | `clk` / `rst_n` |
+| Period | `1000 / FREQ_MHZ`, formatted to two decimal places in ns |
+| Clock uncertainty / latency | 0.05 ns / 0.10 ns |
+| Input / output delay | Fixed 0.30 ns / 0.30 ns, not a percentage of the period |
+| Output load | 0.045 pF as annotated in the main script |
+| Input transition, min rise / fall | 0.146 ns / 0.164 ns |
+| Input transition, max rise / fall | 0.264 ns / 0.252 ns |
+| Initial design rules | Maximum fanout 16; maximum transition 0.5 ns |
+| Additional post-map constraints | Maximum fanout 10 on inputs; maximum transition 0.15 ns on the design |
+| Clock and reset nets | Marked ideal in the SDC; no reset false-path command is present |
 
-O script sintetiza 17 módulos Verilog (todos em `src/core/`):
+The reset name alone is not a polarity specification: the current testbench drives reset high, then releases it low. Preserve the RTL/testbench behavior when interpreting this flow rather than inferring active-low behavior from `rst_n`.
 
-**Essenciais:**
-- `biriscv_defs.v` - Definições e macros
-- `riscv_core.v` - Top module
+The HDL list excludes the simulation trace module and the Xilinx-specific register-file implementation. The script preserves the multiplier and divider hierarchy while permitting other ungrouping.
 
-**Pipeline stages:**
-- `biriscv_fetch.v` - Instruction fetch
-- `biriscv_decode.v` - Instruction decode
-- `biriscv_issue.v` - Dual-issue logic
-- `biriscv_exec.v` - Execution stage
-- `biriscv_lsu.v` - Load/Store Unit
+### Generated outputs
 
-**Functional units:**
-- `biriscv_alu.v` - Arithmetic Logic Unit
-- `biriscv_multiplier.v` - Multiplicador
-- `biriscv_divider.v` - Divisor
-- `biriscv_npc.v` - Next PC logic
-- `biriscv_frontend.v` - Frontend (fetch + branch predict)
+| Output path, relative to the repository | Contents |
+| --- | --- |
+| `synthesis/work/` | Tool working files and logs |
+| `synthesis/reports/<FREQ>_MHz/<CORNER>/` | Timing, timing-lint, area, detailed area, gates, QoR, power, and hierarchy reports |
+| `synthesis/deliverables/<FREQ>_MHz/<CORNER>/` | `riscv_core.v` mapped netlist and `riscv_core.sdf` |
 
-**Support:**
-- `biriscv_decoder.v` - Instruction decoder
-- `biriscv_regfile.v` - Register file (32 x 32-bit)
-- `biriscv_csr.v` - Control/Status Registers
-- `biriscv_csr_regfile.v` - CSR register file
-- `biriscv_mmu.v` - Memory Management Unit
-- `biriscv_pipe_ctrl.v` - Pipeline control
+The committed evidence lives separately in [`reports_versions`](reports_versions/README.md). A new local run does not update that archive automatically.
 
-**NÃO incluídos (não sintetizáveis):**
-- `biriscv_trace_sim.v` - Debug trace (simulation only)
-- `biriscv_xilinx_2r1w.v` - Xilinx-specific (FPGA only)
+## Build an application
 
-## Constraints (SDC)
+The [application Makefile](../riscv-app-gen/Makefile) uses a bare-metal `riscv64-unknown-elf-` toolchain with `-march=rv32im -mabi=ilp32`:
 
-### Clock
-- **Nome**: `clk_i`
-- **Período**: Calculado automaticamente por `FREQ_MHZ`
-  - 100 MHz → 10.0 ns
-  - 200 MHz → 5.0 ns
-- **Uncertainty**: 0.05 ns (jitter)
-- **Latency**: 0.10 ns (clock tree delay estimate)
-
-### Reset
-- **Nome**: `rst_i`
-- **Tipo**: Asynchronous (`set_false_path`)
-
-### I/O Timing
-- **Input delay**: 30% do período de clock
-- **Output delay**: 30% do período de clock
-- **Output load**: 0.045 pF (típico para pad)
-
-### Design Rules
-- **Max fanout**: 16
-- **Max transition**: 0.5 ns
-
-## Relatórios Gerados
-
-### timing.rpt
-Análise de timing. **Slack positivo = OK**.
-```
-Path 1: clk_i (rise) -> reg1/D
-  slack: 2.45 ns (MET)  ← Positivo = OK
+```bash
+cd riscv-app-gen
+make SRC=bubblesort/bubblesort.c
+make info SRC=bubblesort/bubblesort.c
+cd ..
 ```
 
-### area.rpt
-Área ocupada por tipo de célula.
-```
-Total cell area: 125000 µm²
-Sequential: 35%
-Combinational: 65%
-```
+The build emits `.elf`, `.bin`, and disassembly `.s` beside the source. Its linker settings use `main` as the entry point and `-nostartfiles`. Check the ELF entry address, memory placement, and stack/startup assumptions when changing the application or toolchain. The testbench has a fixed `reset_vector_i` of `0x80000054`; it does not automatically read the ELF entry point. The root simulation targets copy the Bubble Sort binary to `tcm.bin`.
 
-### gates.rpt
-Contagem de portas lógicas.
-```
-Total gates: 45000
-Flip-flops: 8500
-Latches: 0
-```
+## Simulation targets and alignment
 
-### qor.rpt
-Resumo de qualidade (QoR).
-```
-Worst slack: 1.23 ns
-Area: 125000 µm²
-Power: 45.2 mW @ 100 MHz
+The root Makefile exposes the following targets:
+
+| Target | Purpose |
+| --- | --- |
+| `sim` / `sim-gui` | RTL simulation, with optional GUI |
+| `compile-sdf` | Compile the SDF using `xmsdfc` |
+| `sim-pos-syn` / `sim-pos-syn-gui` | Gate-level simulation, with optional GUI |
+
+Each target uses `PROJECT_DIR` and `TECH_DIR`; supply the same path overrides as for synthesis. For example, **after aligning the inputs below**, the existing WORST-corner gate-level setup is invoked with:
+
+```bash
+make sim-pos-syn PROJECT_DIR="$PROJECT_DIR" TECH_DIR="$TECH_DIR" \
+  FREQ_MHZ=185 OP_CORNER=WORST
 ```
 
-### power.rpt
-Consumo de potência estimado.
-```
-Total power: 45.2 mW
-Dynamic: 38.5 mW (85%)
-Leakage: 6.7 mW (15%)
-```
+Before interpreting a run, align these fixed settings in [`tb_top.v`](../tb/tb_core_icarus/tb_top.v) with the generated artifacts:
 
-## Arquivos Gerados
+1. **Clock:** the half-period is hardcoded to `2.7027` ns, approximately 185 MHz. `FREQ_MHZ` does not change it.
+2. **SDF:** under `POSTSYN`, the testbench annotates `../deliverables/185_MHz/WORST/riscv_core.sdf`, with the `TYPICAL` SDF value selection. The path is independent of Makefile variables; the SDF value selection and library corner are separate settings.
+3. **Netlist and models:** the Makefile chooses their paths using `FREQ_MHZ`, `OP_CORNER`, and `TECH_DIR`. They must correspond to the SDF and intended run.
+4. **Application:** the binary, entry address, and memory/startup assumptions must agree. The existing bench dumps memory; it is not an automated Bubble Sort pass/fail checker.
+5. **Simulation defines:** the current `BEST` GUI gate-level recipe omits `POSTSYN`, so that recipe does not enable this testbench's conditional SDF annotation as written.
 
-### riscv_core.v (Netlist)
-Netlist sintetizado com:
-- Células da biblioteca (AND, OR, FF, etc.)
-- Wire declarations
-- Instâncias hierárquicas
+The 185 MHz command requires a matching local synthesis output. The archived 170 MHz reports do not supply a usable 185 MHz netlist or SDF. Review simulator warnings, annotation coverage, and the expected application output before claiming a successful gate-level test.
 
-### riscv_core.sdf (Standard Delay Format)
-Delays de propagação para cada:
-- Célula
-- Net (interconexão)
-- Setup/hold times
+The directory name `tb_core_icarus` is historical; the root targets described here invoke Cadence Xcelium. Its separate Icarus Makefile is not presented here as a verified alternative.
 
-Usado em simulação gate-level (GLS) para verificar timing real.
+## Reading the results
 
-## Troubleshooting
+- **Timing and QoR:** check slack, violating paths, constrained endpoints, and the timing-lint report. A higher requested frequency alone is not a successful result.
+- **Area:** distinguish cell area from estimated net area; neither is a measured die area.
+- **Power:** record the activity source and conditions. `USE_VCD_POWER_ANALYSIS` is assigned in the script, but the current script has no command that reads a VCD; that variable alone does not establish activity-based power analysis.
+- **Comparisons:** record the RTL revision, parameters, tool version, libraries, constraints, and verification results for both runs. See the [evidence index](reports_versions/README.md) for the available archive and its gaps.
 
-### Erro: "file not found"
-```tcl
-Error: Cannot find biriscv_alu.v
-```
-**Solução**: Verificar `init_hdl_search_path` em `scripts/riscv_core.tcl`
-
-### Erro: "unresolved reference"
-```tcl
-Error: Cannot resolve module 'biriscv_multiplier'
-```
-**Solução**: Ordem errada em `read_hdl`. Ler dependências primeiro.
-
-### Timing violation (slack negativo)
-```
-Worst slack: -0.85 ns (VIOLATED)
-```
-**Soluções**:
-1. Reduzir `FREQ_MHZ` (ex: 100 → 80 MHz)
-2. Aumentar `clk_uncertainty` no SDC
-3. Ajustar `in_delay`/`out_delay` (reduzir % do período)
-4. Otimizar RTL (reduzir critical path)
-
-### Área muito grande
-```
-Total area: 450000 µm² (muito grande para tecnologia)
-```
-**Soluções**:
-1. Verificar `report_area -detail` para módulos grandes
-2. Reduzir configurações do core (parâmetros em `biriscv_defs.v`)
-3. Desabilitar features opcionais (MMU, branch prediction)
-
-### Licença Genus não disponível
-```
-Error: License checkout failed for Genus_Synthesis
-```
-**Solução**: Verificar com administrador do servidor. Aguardar licença disponível.
-
-## Customização
-
-### Alterar tecnologia (PDK)
-Editar `Makefile`:
-```makefile
-TECH_DIR := /home/tools/design_kits/cadence/IBM180/
-```
-
-Editar `scripts/riscv_core.tcl`:
-```tcl
-set WORST_LIST {<nome_lib_slow>.lib}
-set BEST_LIST {<nome_lib_fast>.lib}
-set LEF_LIST {<tech>.lef <macro>.lef}
-set QRC_LIST {<caminho_qrc>/qrcTechFile}
-```
-
-### Alterar constraints
-Editar `constraints/riscv_core.sdc`:
-```tcl
-# Exemplo: Clock de 50 MHz em vez de variável
-create_clock -name clk_i -period 20.0 [get_ports clk_i]
-```
-
-### Adicionar otimizações
-Editar `scripts/riscv_core.tcl` antes de `syn_map`:
-```tcl
-# Exemplo: Forçar ungroup para melhor otimização
-set_db auto_ungroup both
-
-# Exemplo: Effort level máximo
-set_db syn_map_effort high
-```
-
-## Referências
-
-- **Genus User Guide**: `/home/tools/cadence/genus/doc/`
-- **GPDK045 Documentation**: `${TECH_DIR}/docs/`
-- **biRISC-V Original**: https://github.com/ultraembedded/biriscv
-- **SDC Syntax**: IEEE 1481-2009 Standard
+These instructions document the existing flow and its limitations. No new synthesis, timing closure, or functional verification is claimed by this documentation update.
